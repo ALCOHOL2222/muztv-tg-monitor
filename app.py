@@ -12,7 +12,7 @@ def _needs_comment_override(path_like):
         s = str(path_like).lower()
     except Exception:
         return False
-    return "tg_muztv_archive_period" in s and ("xlsx" in s or "csv" in s)
+    return (("tg_muztv_archive_period" in s) or ("data.csv" in s)) and ("xlsx" in s or "csv" in s)
 
 def _read_excel_with_comment_overrides(*args, **kwargs):
     df = _original_read_excel(*args, **kwargs)
