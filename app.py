@@ -10,10 +10,8 @@ DATA_PATH = BASE_DIR / "data.csv"
 
 def strip_html(text: str) -> str:
     text = str(text or "")
-    text = re.sub(r"<script[\s\S]*?</script>", " ", 
-    text, flags=re.IGNORECASE)
-    text = re.sub(r"<style[\s\S]*?</style>", " ", 
-    text, flags=re.IGNORECASE)
+    text = re.sub(r"<script[\s\S]*?</script>", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
     text = re.sub(r"<[^>]+>", " ", text)
     text = (
         text.replace("&nbsp;", " ")
@@ -27,25 +25,21 @@ def strip_html(text: str) -> str:
 
 def cleanup_text(text: str) -> str:
     text = strip_html(text)
-    bad_phrases = [
+    for phrase in [
         "media is too big",
         "view in telegram",
         "open in web",
         "this media is not supported in your browser",
         "embed",
         "open in channel",
-    ]
-    low = text.lower()
-    for phrase in bad_phrases:
-        low = low.replace(phrase, " ")
-    low = re.sub(r"\s+", " ", low).strip()
-    return low
+    ]:
+        text = re.sub(re.escape(phrase), " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 def norm(text: str) -> str:
-    text = cleanup_text(text).lower().replace("?", "?")
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    return cleanup_text(text).lower().replace("?", "?")
 
 
 LAT_TO_CYR = str.maketrans({
@@ -60,53 +54,48 @@ CYR_TO_LAT = str.maketrans({
 
 
 def generate_term_variants(term: str):
-    base = norm(term)
+    base = norm(term).strip()
     variants = {base}
     variants.add(base.translate(LAT_TO_CYR))
     variants.add(base.translate(CYR_TO_LAT))
     return [v for v in variants if v]
 
 
-def tokenize(text: str):
-    return re.findall(r"[0-9A-Za-z?-??-???]+", norm(text))
+def token_pattern(token: str) -> str:
+    token = token.strip()
+    if not token:
+        return ""
+
+    # short aliases like MOT / ??? -> exact word only
+    if len(token) <= 3:
+        return rf"\b{re.escape(token)}\b"
+
+    # inflection-tolerant prefix for regular names
+    stem_len = max(3, len(token) - 2)
+    stem = token[:stem_len]
+    return rf"\b{re.escape(stem)}[A-Za-z?-??-???0-9_-]*"
 
 
-def token_matches(query_token: str, text_token: str):
-    query_token = str(query_token or "")
-    text_token = str(text_token or "")
-
-    if not query_token or not text_token:
-        return False
-
-    # Short names like MOT / ??? -> exact token only
-    if len(query_token) <= 3:
-        return text_token == query_token
-
-    # Inflection-tolerant matching for regular names
-    stem_len = max(3, len(query_token) - 2)
-    stem = query_token[:stem_len]
-    return text_token.startswith(stem)
-
-
-def row_matches_term(text: str, variants):
-    tokens = tokenize(text)
-
-    for variant in variants:
-        qtokens = re.findall(r"[0-9A-Za-z?-??-???]+", variant)
-        if not qtokens:
+def build_term_regex(term: str):
+    regexes = []
+    for variant in generate_term_variants(term):
+        tokens = re.findall(r"[0-9A-Za-z?-??-???]+", variant)
+        if not tokens:
             continue
 
-        ok = True
-        for qtok in qtokens:
-            found = any(token_matches(qtok, ttok) for ttok in tokens)
-            if not found:
-                ok = False
-                break
+        parts = [token_pattern(t) for t in tokens if token_pattern(t)]
+        if not parts:
+            continue
 
-        if ok:
-            return True
+        if len(parts) == 1:
+            pattern = parts[0]
+        else:
+            # each word in the phrase must be present somewhere in the text
+            pattern = "".join(f"(?=.*{p})" for p in parts) + ".*"
 
-    return False
+        regexes.append(re.compile(pattern, re.IGNORECASE | re.DOTALL))
+
+    return regexes
 
 
 @st.cache_data
@@ -138,8 +127,7 @@ def load_data():
     for col in ["views", "likes_visible", "comments_visible", "reposts_visible"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-    text_cols = ["source", "channel_name", "post_id", "post_url", "published_at", "post_text", "raw_html", "processed_comments"]
-    for col in text_cols:
+    for col in ["source", "channel_name", "post_id", "post_url", "published_at", "post_text", "raw_html", "processed_comments"]:
         df[col] = df[col].fillna("").astype(str)
 
     try:
@@ -149,12 +137,12 @@ def load_data():
 
     df["post_url"] = df["post_url"].str.strip()
 
-    visible_text = df["post_text"].astype(str).copy()
+    visible_text = df["post_text"].copy()
     empty_mask = visible_text.str.strip().eq("")
-    visible_text.loc[empty_mask] = df.loc[empty_mask, "raw_html"].astype(str)
+    visible_text.loc[empty_mask] = df.loc[empty_mask, "raw_html"]
     visible_text = visible_text.map(cleanup_text)
 
-    comments_text = df["processed_comments"].astype(str).map(cleanup_text)
+    comments_text = df["processed_comments"].map(cleanup_text)
 
     df["visible_text"] = visible_text
     df["comments_text"] = comments_text
@@ -220,7 +208,9 @@ if artist.strip():
     search_terms.append(artist.strip())
 search_terms.extend(aliases)
 
-term_variants_map = [generate_term_variants(term) for term in search_terms if term.strip()]
+term_regexes = []
+for term in search_terms:
+    term_regexes.extend(build_term_regex(term))
 
 filtered_df = df.copy()
 
@@ -230,13 +220,14 @@ if date_from is not None and "published_at_dt" in filtered_df.columns:
 if date_to is not None and "published_at_dt" in filtered_df.columns:
     filtered_df = filtered_df[filtered_df["published_at_dt"].dt.date <= date_to]
 
-if term_variants_map:
+if term_regexes:
     search_blob = (
         filtered_df["visible_text"].fillna("").astype(str)
         + " "
         + filtered_df["comments_text"].fillna("").astype(str)
-    )
-    mask = search_blob.apply(lambda x: any(row_matches_term(x, variants) for variants in term_variants_map))
+    ).map(norm)
+
+    mask = search_blob.apply(lambda x: any(r.search(x) for r in term_regexes))
     filtered_df = filtered_df[mask]
 
 posts_total = int(len(filtered_df))
