@@ -10,8 +10,10 @@ DATA_PATH = BASE_DIR / "data.csv"
 
 def strip_html(text: str) -> str:
     text = str(text or "")
-    text = re.sub(r"<script[\s\S]*?</script>", " ", text, flags=re.IGNORECASE)
-    text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"<script[\s\S]*?</script>", " ", 
+    text, flags=re.IGNORECASE)
+    text = re.sub(r"<style[\s\S]*?</style>", " ", 
+    text, flags=re.IGNORECASE)
     text = re.sub(r"<[^>]+>", " ", text)
     text = (
         text.replace("&nbsp;", " ")
