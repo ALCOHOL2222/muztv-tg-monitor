@@ -190,20 +190,56 @@ if df["published_at_dt"].notna().any():
     min_date = df["published_at_dt"].min().date()
     max_date = df["published_at_dt"].max().date()
 
+if "applied_artist" not in st.session_state:
+    st.session_state["applied_artist"] = ""
+if "applied_aliases" not in st.session_state:
+    st.session_state["applied_aliases"] = ""
+if "applied_date_from" not in st.session_state:
+    st.session_state["applied_date_from"] = min_date
+if "applied_date_to" not in st.session_state:
+    st.session_state["applied_date_to"] = max_date
+
 with st.sidebar:
     st.header("Search parameters")
-    with st.form("search_form"):
-        artist = st.text_input("Artist", "")
-        aliases_raw = st.text_input("Aliases (comma separated)", "")
 
-        if min_date and max_date:
-            date_from = st.date_input("Date from", value=min_date)
-            date_to = st.date_input("Date to", value=max_date)
-        else:
-            date_from = None
-            date_to = None
+    input_artist = st.text_input(
+        "Artist",
+        value=st.session_state["applied_artist"],
+        key="artist_input"
+    )
 
-        submitted = st.form_submit_button("Search")
+    input_aliases = st.text_input(
+        "Aliases (comma separated)",
+        value=st.session_state["applied_aliases"],
+        key="aliases_input"
+    )
+
+    if min_date and max_date:
+        input_date_from = st.date_input(
+            "Date from",
+            value=st.session_state["applied_date_from"] or min_date,
+            key="date_from_input"
+        )
+        input_date_to = st.date_input(
+            "Date to",
+            value=st.session_state["applied_date_to"] or max_date,
+            key="date_to_input"
+        )
+    else:
+        input_date_from = None
+        input_date_to = None
+
+    if st.button("Search", type="primary", use_container_width=True):
+        st.session_state["applied_artist"] = input_artist
+        st.session_state["applied_aliases"] = input_aliases
+        st.session_state["applied_date_from"] = input_date_from
+        st.session_state["applied_date_to"] = input_date_to
+        st.rerun()
+
+artist = st.session_state["applied_artist"]
+aliases_raw = st.session_state["applied_aliases"]
+date_from = st.session_state["applied_date_from"]
+date_to = st.session_state["applied_date_to"]
 
 aliases = [x.strip() for x in aliases_raw.split(",") if x.strip()]
 search_terms = []
