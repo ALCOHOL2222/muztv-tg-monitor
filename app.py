@@ -23,7 +23,7 @@ def strip_html(text: str) -> str:
     return text.strip()
 
 
-def cleanup_telegram_noise(text: str) -> str:
+def cleanup_text(text: str) -> str:
     text = strip_html(text)
     bad_phrases = [
         "media is too big",
@@ -41,7 +41,7 @@ def cleanup_telegram_noise(text: str) -> str:
 
 
 def norm(text: str) -> str:
-    text = cleanup_telegram_noise(text).lower().replace("?", "?")
+    text = cleanup_text(text).lower().replace("?", "?")
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
@@ -76,76 +76,32 @@ def token_matches(query_token: str, text_token: str):
     if not query_token or not text_token:
         return False
 
-    # ???????? ????? ????? ??? / MOT ? ?????? ?????? ??????????
+    # Short names like MOT / ??? -> exact token only
     if len(query_token) <= 3:
         return text_token == query_token
 
-    # ??? ??????? ???? ???? ?? ??????, ????? ?????? ?????????:
-    # ????? -> ?????? / ???????
-    # ???? -> ???? / ????
-    if len(query_token) == 4:
-        stem = query_token[:3]
-    elif len(query_token) == 5:
-        stem = query_token[:4]
-    else:
-        stem = query_token[: max(4, len(query_token) - 2)]
-
-    return text_token.startswith(stem)
-
-
-def token_matches(query_token: str, text_token: str):
-    query_token = str(query_token or "")
-    text_token = str(text_token or "")
-
-    if not query_token or not text_token:
-        return False
-
-    # ???????? ????? ????? ??? / MOT ? ?????? ?????? ??????????
-    if len(query_token) <= 3:
-        return text_token == query_token
-
-    # ??? ??????? ???? ???? ?? ??????, ????? ?????? ?????????:
-    # ????? -> ?????? / ???????
-    # ???? -> ???? / ????
-    if len(query_token) == 4:
-        stem = query_token[:3]
-    elif len(query_token) == 5:
-        stem = query_token[:4]
-    else:
-        stem = query_token[: max(4, len(query_token) - 2)]
-
+    # Inflection-tolerant matching for regular names
+    stem_len = max(3, len(query_token) - 2)
+    stem = query_token[:stem_len]
     return text_token.startswith(stem)
 
 
 def row_matches_term(text: str, variants):
-    text_norm = norm(text)
-    tokens = tokenize(text_norm)
+    tokens = tokenize(text)
 
     for variant in variants:
-        if not variant:
+        qtokens = re.findall(r"[0-9A-Za-z?-??-???]+", variant)
+        if not qtokens:
             continue
 
-        variant_tokens = re.findall(r"[0-9A-Za-z?-??-???]+", variant)
-        if not variant_tokens:
-            continue
+        ok = True
+        for qtok in qtokens:
+            found = any(token_matches(qtok, ttok) for ttok in tokens)
+            if not found:
+                ok = False
+                break
 
-        # ???? ? ??????? ????????? ???? (????????, "???? ?????"),
-        # ??????? ???????????, ???? ?????? ????? ??????? ???????
-        # ????? ??????? ?????? ? ?????? ?????????.
-        if len(variant_tokens) > 1:
-            ok = True
-            for qtok in variant_tokens:
-                found = any(token_matches(qtok, ttok) for ttok in tokens)
-                if not found:
-                    ok = False
-                    break
-            if ok:
-                return True
-            continue
-
-        # ???? ?????
-        qtok = variant_tokens[0]
-        if any(token_matches(qtok, ttok) for ttok in tokens):
+        if ok:
             return True
 
     return False
@@ -194,9 +150,9 @@ def load_data():
     visible_text = df["post_text"].astype(str).copy()
     empty_mask = visible_text.str.strip().eq("")
     visible_text.loc[empty_mask] = df.loc[empty_mask, "raw_html"].astype(str)
-    visible_text = visible_text.map(cleanup_telegram_noise)
+    visible_text = visible_text.map(cleanup_text)
 
-    comments_text = df["processed_comments"].astype(str).map(cleanup_telegram_noise)
+    comments_text = df["processed_comments"].astype(str).map(cleanup_text)
 
     df["visible_text"] = visible_text
     df["comments_text"] = comments_text
@@ -230,12 +186,12 @@ def save_main_editor_changes(edited_df: pd.DataFrame):
 st.set_page_config(page_title="MUZTV Telegram Monitor", layout="wide")
 
 st.title("MUZTV Telegram Monitor")
-st.caption("\\u0412\\u0435\\u0431-\\u0432\\u0435\\u0440\\u0441\\u0438\\u044f \\u043f\\u043e \\u0430\\u0440\\u0445\\u0438\\u0432\\u0443 Telegram MUZ-TV".encode("utf-8").decode("unicode_escape"))
+st.caption("Web version based on Telegram MUZ-TV archive")
 
 df = load_data()
 
 if df.empty:
-    st.warning("\\u0410\\u0440\\u0445\\u0438\\u0432 Telegram \\u043f\\u043e\\u043a\\u0430 \\u043d\\u0435 \\u043d\\u0430\\u0439\\u0434\\u0435\\u043d \\u0438\\u043b\\u0438 \\u043f\\u0443\\u0441\\u0442.".encode("utf-8").decode("unicode_escape"))
+    st.warning("Archive file was not found or is empty.")
     st.stop()
 
 min_date = None
@@ -245,13 +201,13 @@ if df["published_at_dt"].notna().any():
     max_date = df["published_at_dt"].max().date()
 
 with st.sidebar:
-    st.header("\\u041f\\u0430\\u0440\\u0430\\u043c\\u0435\\u0442\\u0440\\u044b \\u043f\\u043e\\u0438\\u0441\\u043a\\u0430".encode("utf-8").decode("unicode_escape"))
-    artist = st.text_input("\\u0410\\u0440\\u0442\\u0438\\u0441\\u0442".encode("utf-8").decode("unicode_escape"), "")
-    aliases_raw = st.text_input("\\u0410\\u043b\\u0438\\u0430\\u0441\\u044b \\u0447\\u0435\\u0440\\u0435\\u0437 \\u0437\\u0430\\u043f\\u044f\\u0442\\u0443\\u044e".encode("utf-8").decode("unicode_escape"), "")
+    st.header("Search parameters")
+    artist = st.text_input("Artist", "")
+    aliases_raw = st.text_input("Aliases (comma separated)", "")
 
     if min_date and max_date:
-        date_from = st.date_input("\\u0414\\u0430\\u0442\\u0430 \\u0441".encode("utf-8").decode("unicode_escape"), value=min_date)
-        date_to = st.date_input("\\u0414\\u0430\\u0442\\u0430 \\u043f\\u043e".encode("utf-8").decode("unicode_escape"), value=max_date)
+        date_from = st.date_input("Date from", value=min_date)
+        date_to = st.date_input("Date to", value=max_date)
     else:
         date_from = None
         date_to = None
@@ -292,19 +248,15 @@ if views_total > 0:
     erv_percent = round((likes_total + comments_total + reposts_total) / views_total * 100, 2)
 
 m1, m2, m3, m4, m5, m6 = st.columns(6)
-m1.metric("\\u041f\\u043e\\u0441\\u0442\\u044b".encode("utf-8").decode("unicode_escape"), posts_total)
-m2.metric("\\u041b\\u0430\\u0439\\u043a\\u0438".encode("utf-8").decode("unicode_escape"), likes_total)
-m3.metric("\\u041a\\u043e\\u043c\\u043c\\u0435\\u043d\\u0442\\u0430\\u0440\\u0438\\u0438".encode("utf-8").decode("unicode_escape"), comments_total)
-m4.metric("\\u0420\\u0435\\u043f\\u043e\\u0441\\u0442\\u044b".encode("utf-8").decode("unicode_escape"), reposts_total)
-m5.metric("\\u041f\\u0440\\u043e\\u0441\\u043c\\u043e\\u0442\\u0440\\u044b".encode("utf-8").decode("unicode_escape"), views_total)
+m1.metric("Posts", posts_total)
+m2.metric("Likes", likes_total)
+m3.metric("Comments", comments_total)
+m4.metric("Reposts", reposts_total)
+m5.metric("Views", views_total)
 m6.metric("ERV %", f"{erv_percent:.2f}")
 
 st.caption(
-    f"ERV = (" +
-    "\\u043b\\u0430\\u0439\\u043a\\u0438".encode("utf-8").decode("unicode_escape") + f" {likes_total} + " +
-    "\\u043a\\u043e\\u043c\\u043c\\u0435\\u043d\\u0442\\u0430\\u0440\\u0438\\u0438".encode("utf-8").decode("unicode_escape") + f" {comments_total} + " +
-    "\\u0440\\u0435\\u043f\\u043e\\u0441\\u0442\\u044b".encode("utf-8").decode("unicode_escape") + f" {reposts_total}) / " +
-    "\\u043f\\u0440\\u043e\\u0441\\u043c\\u043e\\u0442\\u0440\\u044b".encode("utf-8").decode("unicode_escape") + f" {views_total}"
+    f"ERV = (likes {likes_total} + comments {comments_total} + reposts {reposts_total}) / views {views_total}"
 )
 
 show_cols = [
@@ -328,11 +280,11 @@ if "published_at" in show_df.columns:
     except Exception:
         pass
 
-st.subheader("\\u041d\\u0430\\u0439\\u0434\\u0435\\u043d\\u043d\\u044b\\u0435 \\u043f\\u043e\\u0441\\u0442\\u044b".encode("utf-8").decode("unicode_escape"))
+st.subheader("Found posts")
 
 limit = min(len(show_df), 200)
 if len(show_df) > 200:
-    st.info("\\u0414\\u043b\\u044f \\u0440\\u0435\\u0434\\u0430\\u043a\\u0442\\u0438\\u0440\\u043e\\u0432\\u0430\\u043d\\u0438\\u044f \\u043f\\u043e\\u043a\\u0430\\u0437\\u0430\\u043d\\u044b \\u043f\\u0435\\u0440\\u0432\\u044b\\u0435 200 \\u0441\\u0442\\u0440\\u043e\\u043a \\u0442\\u0435\\u043a\\u0443\\u0449\\u0435\\u0433\\u043e \\u0444\\u0438\\u043b\\u044c\\u0442\\u0440\\u0430, \\u0447\\u0442\\u043e\\u0431\\u044b \\u043f\\u0440\\u0438\\u043b\\u043e\\u0436\\u0435\\u043d\\u0438\\u0435 \\u043d\\u0435 \\u043f\\u0430\\u0434\\u0430\\u043b\\u043e \\u043f\\u043e \\u043f\\u0430\\u043c\\u044f\\u0442\\u0438.".encode("utf-8").decode("unicode_escape"))
+    st.info("Only the first 200 rows of the current filter are shown in the editor to avoid memory issues.")
 
 editor_df = show_df.head(limit).copy()
 
@@ -347,17 +299,17 @@ edited_show_df = st.data_editor(
 c1, c2 = st.columns([1, 5])
 
 with c1:
-    if st.button("\\u0421\\u043e\\u0445\\u0440\\u0430\\u043d\\u0438\\u0442\\u044c \\u0438\\u0437\\u043c\\u0435\\u043d\\u0435\\u043d\\u0438\\u044f".encode("utf-8").decode("unicode_escape")):
+    if st.button("Save changes"):
         try:
             save_main_editor_changes(edited_show_df)
-            st.success("\\u0418\\u0437\\u043c\\u0435\\u043d\\u0435\\u043d\\u0438\\u044f \\u0441\\u043e\\u0445\\u0440\\u0430\\u043d\\u0435\\u043d\\u044b \\u0432 data.csv".encode("utf-8").decode("unicode_escape"))
+            st.success("Changes were saved to data.csv")
             st.rerun()
         except Exception as e:
             st.error("Save error: " + str(e))
 
 csv_data = show_df.to_csv(index=False).encode("utf-8-sig")
 st.download_button(
-    label="\\u0421\\u043a\\u0430\\u0447\\u0430\\u0442\\u044c CSV".encode("utf-8").decode("unicode_escape"),
+    label="Download CSV",
     data=csv_data,
     file_name="tg_filtered_posts.csv",
     mime="text/csv",
