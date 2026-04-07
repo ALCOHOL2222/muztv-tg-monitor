@@ -1,0 +1,15 @@
+﻿.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+
+output/
+playwright_telegram_profile/
+data/
+
+debug_*.html
+debug_*.json
+debug_*.txt
+
+.streamlit/
