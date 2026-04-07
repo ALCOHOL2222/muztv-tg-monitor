@@ -12,6 +12,15 @@ def norm(text) -> str:
     return re.sub(r"\s+", " ", str(text or "").lower().replace("?", "?")).strip()
 
 
+def build_exact_pattern(term: str):
+    term = norm(term)
+    if not term:
+        return None
+    escaped = re.escape(term)
+    # ?????? ????? / ?????????, ? ?? ????? ?????? ??????? ?????
+    return re.compile(rf'(?<![0-9A-Za-z?-??-???_]){escaped}(?![0-9A-Za-z?-??-???_])', re.IGNORECASE)
+
+
 @st.cache_data
 def load_data():
     if not DATA_PATH.exists():
@@ -19,7 +28,15 @@ def load_data():
 
     df = pd.read_csv(DATA_PATH)
 
-    for col in ["post_url", "post_text", "published_at"]:
+    needed_text_cols = [
+        "post_text",
+        "text",
+        "message",
+        "caption",
+        "title",
+        "content",
+    ]
+    for col in needed_text_cols + ["post_url", "published_at"]:
         if col not in df.columns:
             df[col] = ""
 
@@ -35,7 +52,9 @@ def load_data():
         df["published_at_dt"] = pd.NaT
 
     df["post_url"] = df["post_url"].astype(str).str.strip()
-    df["post_text"] = df["post_text"].astype(str)
+
+    for col in needed_text_cols:
+        df[col] = df[col].fillna("").astype(str)
 
     return df
 
@@ -65,7 +84,7 @@ def save_main_editor_changes(edited_df: pd.DataFrame):
 st.set_page_config(page_title="MUZTV Telegram Monitor", layout="wide")
 
 st.title("MUZTV Telegram Monitor")
-st.caption("????????? ???-?????? ?? ?????? Telegram MUZ-TV")
+st.caption("???-?????? ?? ?????? Telegram MUZ-TV")
 
 df = load_data()
 
@@ -92,8 +111,13 @@ with st.sidebar:
         date_to = None
 
 aliases = [x.strip() for x in aliases_raw.split(",") if x.strip()]
-search_terms = [artist.strip()] + aliases if artist.strip() else aliases
-search_terms = [norm(x) for x in search_terms if x.strip()]
+search_terms = []
+if artist.strip():
+    search_terms.append(artist.strip())
+search_terms.extend(aliases)
+
+patterns = [build_exact_pattern(x) for x in search_terms]
+patterns = [p for p in patterns if p is not None]
 
 filtered_df = df.copy()
 
@@ -107,16 +131,18 @@ if date_to is not None and "published_at_dt" in filtered_df.columns:
         filtered_df["published_at_dt"].dt.date <= date_to
     ]
 
-if search_terms:
-    text_norm = (
-        filtered_df["post_text"].fillna("").map(norm)
-        + " "
-        + filtered_df["post_url"].fillna("").map(norm)
-    )
+text_cols = [c for c in ["post_text", "text", "message", "caption", "title", "content"] if c in filtered_df.columns]
+
+if patterns:
+    combined_text = pd.Series("", index=filtered_df.index, dtype="object")
+    for col in text_cols:
+        combined_text = combined_text + " " + filtered_df[col].fillna("").astype(str)
+
+    combined_text = combined_text.map(norm)
 
     mask = pd.Series(False, index=filtered_df.index)
-    for term in search_terms:
-        mask = mask | text_norm.str.contains(re.escape(term), na=False)
+    for pattern in patterns:
+        mask = mask | combined_text.str.contains(pattern, na=False)
 
     filtered_df = filtered_df[mask]
 
@@ -150,6 +176,7 @@ show_cols = [
         "likes_visible",
         "comments_visible",
         "reposts_visible",
+        "post_text",
     ]
     if c in filtered_df.columns
 ]
