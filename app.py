@@ -190,56 +190,17 @@ if df["published_at_dt"].notna().any():
     min_date = df["published_at_dt"].min().date()
     max_date = df["published_at_dt"].max().date()
 
-if "applied_artist" not in st.session_state:
-    st.session_state["applied_artist"] = ""
-if "applied_aliases" not in st.session_state:
-    st.session_state["applied_aliases"] = ""
-if "applied_date_from" not in st.session_state:
-    st.session_state["applied_date_from"] = min_date
-if "applied_date_to" not in st.session_state:
-    st.session_state["applied_date_to"] = max_date
-
-def apply_filters():
-    st.session_state["applied_artist"] = st.session_state.get("artist_input", "")
-    st.session_state["applied_aliases"] = st.session_state.get("aliases_input", "")
-    st.session_state["applied_date_from"] = st.session_state.get("date_from_input", min_date)
-    st.session_state["applied_date_to"] = st.session_state.get("date_to_input", max_date)
-
 with st.sidebar:
     st.header("Search parameters")
-
-    st.text_input(
-        "Artist",
-        value=st.session_state["applied_artist"],
-        key="artist_input",
-        on_change=apply_filters,
-    )
-
-    st.text_input(
-        "Aliases (comma separated)",
-        value=st.session_state["applied_aliases"],
-        key="aliases_input",
-        on_change=apply_filters,
-    )
+    artist = st.text_input("Artist", "")
+    aliases_raw = st.text_input("Aliases (comma separated)", "")
 
     if min_date and max_date:
-        st.date_input(
-            "Date from",
-            value=st.session_state["applied_date_from"] or min_date,
-            key="date_from_input",
-            on_change=apply_filters,
-        )
-        st.date_input(
-            "Date to",
-            value=st.session_state["applied_date_to"] or max_date,
-            key="date_to_input",
-            on_change=apply_filters,
-        )
-
-artist = st.session_state["applied_artist"]
-aliases_raw = st.session_state["applied_aliases"]
-date_from = st.session_state["applied_date_from"]
-date_to = st.session_state["applied_date_to"]
+        date_from = st.date_input("Date from", value=min_date)
+        date_to = st.date_input("Date to", value=max_date)
+    else:
+        date_from = None
+        date_to = None
 
 aliases = [x.strip() for x in aliases_raw.split(",") if x.strip()]
 search_terms = []
