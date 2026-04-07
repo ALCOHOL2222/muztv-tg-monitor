@@ -66,24 +66,25 @@ def generate_term_variants(term: str):
 
 
 def tokenize(text: str):
-    return set(re.findall(r"[0-9A-Za-z?-??-???]+", norm(text)))
+    return re.findall(r"[0-9A-Za-z?-??-???]+", norm(text))
 
 
 def row_matches_term(text: str, variants):
     text_norm = norm(text)
     tokens = tokenize(text_norm)
+    token_set = set(tokens)
 
     for variant in variants:
         if not variant:
             continue
 
-        # ???????? ?????: ?????? ?????? ?????
+        # ???????? ????? ????? ??? / MOT ? ?????? ?????? ?????
         if len(variant) <= 3 and " " not in variant:
-            if variant in tokens:
+            if variant in token_set:
                 return True
             continue
 
-        # ?????: ?????? ????????? ????? ?? ????????
+        # ????? ? ?????? ????????? ?????
         if " " in variant:
             pattern = re.compile(
                 rf'(?<![0-9A-Za-z?-??-???_]){re.escape(variant)}(?![0-9A-Za-z?-??-???_])',
@@ -93,9 +94,9 @@ def row_matches_term(text: str, variants):
                 return True
             continue
 
-        # ??????? ???????/?????: ???? ??? ??????/????? ?????, ????? ?????? ?????/??????
+        # ??????? ?????/??????? ? ???? ?? ?????? ?????, ????? ?????? ????? / ?????? / ???????
         for token in tokens:
-            if token.startswith(variant) or variant in token:
+            if token.startswith(variant):
                 return True
 
     return False
@@ -130,7 +131,8 @@ def load_data():
     for col in ["views", "likes_visible", "comments_visible", "reposts_visible"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
-    for col in ["source", "channel_name", "post_id", "post_url", "published_at", "post_text", "raw_html", "processed_comments"]:
+    text_cols = ["source", "channel_name", "post_id", "post_url", "published_at", "post_text", "raw_html", "processed_comments"]
+    for col in text_cols:
         df[col] = df[col].fillna("").astype(str)
 
     try:
@@ -158,7 +160,7 @@ def save_main_editor_changes(edited_df: pd.DataFrame):
     full_df = pd.read_csv(DATA_PATH)
 
     if "post_url" not in full_df.columns:
-        raise ValueError("? data.csv ??? ??????? post_url")
+        raise ValueError("No post_url column in data.csv")
 
     full_df["post_url"] = full_df["post_url"].fillna("").astype(str).str.strip()
     edited_df = edited_df.copy()
@@ -179,12 +181,12 @@ def save_main_editor_changes(edited_df: pd.DataFrame):
 st.set_page_config(page_title="MUZTV Telegram Monitor", layout="wide")
 
 st.title("MUZTV Telegram Monitor")
-st.caption("???-?????? ?? ?????? Telegram MUZ-TV")
+st.caption("\\u0412\\u0435\\u0431-\\u0432\\u0435\\u0440\\u0441\\u0438\\u044f \\u043f\\u043e \\u0430\\u0440\\u0445\\u0438\\u0432\\u0443 Telegram MUZ-TV".encode("utf-8").decode("unicode_escape"))
 
 df = load_data()
 
 if df.empty:
-    st.warning("????? Telegram ???? ?? ?????? ??? ????.")
+    st.warning("\\u0410\\u0440\\u0445\\u0438\\u0432 Telegram \\u043f\\u043e\\u043a\\u0430 \\u043d\\u0435 \\u043d\\u0430\\u0439\\u0434\\u0435\\u043d \\u0438\\u043b\\u0438 \\u043f\\u0443\\u0441\\u0442.".encode("utf-8").decode("unicode_escape"))
     st.stop()
 
 min_date = None
@@ -194,13 +196,13 @@ if df["published_at_dt"].notna().any():
     max_date = df["published_at_dt"].max().date()
 
 with st.sidebar:
-    st.header("????????? ??????")
-    artist = st.text_input("??????", "")
-    aliases_raw = st.text_input("?????? ????? ???????", "")
+    st.header("\\u041f\\u0430\\u0440\\u0430\\u043c\\u0435\\u0442\\u0440\\u044b \\u043f\\u043e\\u0438\\u0441\\u043a\\u0430".encode("utf-8").decode("unicode_escape"))
+    artist = st.text_input("\\u0410\\u0440\\u0442\\u0438\\u0441\\u0442".encode("utf-8").decode("unicode_escape"), "")
+    aliases_raw = st.text_input("\\u0410\\u043b\\u0438\\u0430\\u0441\\u044b \\u0447\\u0435\\u0440\\u0435\\u0437 \\u0437\\u0430\\u043f\\u044f\\u0442\\u0443\\u044e".encode("utf-8").decode("unicode_escape"), "")
 
     if min_date and max_date:
-        date_from = st.date_input("???? ?", value=min_date)
-        date_to = st.date_input("???? ??", value=max_date)
+        date_from = st.date_input("\\u0414\\u0430\\u0442\\u0430 \\u0441".encode("utf-8").decode("unicode_escape"), value=min_date)
+        date_to = st.date_input("\\u0414\\u0430\\u0442\\u0430 \\u043f\\u043e".encode("utf-8").decode("unicode_escape"), value=max_date)
     else:
         date_from = None
         date_to = None
@@ -241,15 +243,19 @@ if views_total > 0:
     erv_percent = round((likes_total + comments_total + reposts_total) / views_total * 100, 2)
 
 m1, m2, m3, m4, m5, m6 = st.columns(6)
-m1.metric("?????", posts_total)
-m2.metric("?????", likes_total)
-m3.metric("???????????", comments_total)
-m4.metric("???????", reposts_total)
-m5.metric("?????????", views_total)
+m1.metric("\\u041f\\u043e\\u0441\\u0442\\u044b".encode("utf-8").decode("unicode_escape"), posts_total)
+m2.metric("\\u041b\\u0430\\u0439\\u043a\\u0438".encode("utf-8").decode("unicode_escape"), likes_total)
+m3.metric("\\u041a\\u043e\\u043c\\u043c\\u0435\\u043d\\u0442\\u0430\\u0440\\u0438\\u0438".encode("utf-8").decode("unicode_escape"), comments_total)
+m4.metric("\\u0420\\u0435\\u043f\\u043e\\u0441\\u0442\\u044b".encode("utf-8").decode("unicode_escape"), reposts_total)
+m5.metric("\\u041f\\u0440\\u043e\\u0441\\u043c\\u043e\\u0442\\u0440\\u044b".encode("utf-8").decode("unicode_escape"), views_total)
 m6.metric("ERV %", f"{erv_percent:.2f}")
 
 st.caption(
-    f"ERV = (????? {likes_total} + ??????????? {comments_total} + ??????? {reposts_total}) / ????????? {views_total}"
+    f"ERV = (" +
+    "\\u043b\\u0430\\u0439\\u043a\\u0438".encode("utf-8").decode("unicode_escape") + f" {likes_total} + " +
+    "\\u043a\\u043e\\u043c\\u043c\\u0435\\u043d\\u0442\\u0430\\u0440\\u0438\\u0438".encode("utf-8").decode("unicode_escape") + f" {comments_total} + " +
+    "\\u0440\\u0435\\u043f\\u043e\\u0441\\u0442\\u044b".encode("utf-8").decode("unicode_escape") + f" {reposts_total}) / " +
+    "\\u043f\\u0440\\u043e\\u0441\\u043c\\u043e\\u0442\\u0440\\u044b".encode("utf-8").decode("unicode_escape") + f" {views_total}"
 )
 
 show_cols = [
@@ -273,11 +279,11 @@ if "published_at" in show_df.columns:
     except Exception:
         pass
 
-st.subheader("????????? ?????")
+st.subheader("\\u041d\\u0430\\u0439\\u0434\\u0435\\u043d\\u043d\\u044b\\u0435 \\u043f\\u043e\\u0441\\u0442\\u044b".encode("utf-8").decode("unicode_escape"))
 
 limit = min(len(show_df), 200)
 if len(show_df) > 200:
-    st.info("??? ?????????????? ???????? ?????? 200 ????? ???????? ???????, ????? ?????????? ?? ?????? ?? ??????.")
+    st.info("\\u0414\\u043b\\u044f \\u0440\\u0435\\u0434\\u0430\\u043a\\u0442\\u0438\\u0440\\u043e\\u0432\\u0430\\u043d\\u0438\\u044f \\u043f\\u043e\\u043a\\u0430\\u0437\\u0430\\u043d\\u044b \\u043f\\u0435\\u0440\\u0432\\u044b\\u0435 200 \\u0441\\u0442\\u0440\\u043e\\u043a \\u0442\\u0435\\u043a\\u0443\\u0449\\u0435\\u0433\\u043e \\u0444\\u0438\\u043b\\u044c\\u0442\\u0440\\u0430, \\u0447\\u0442\\u043e\\u0431\\u044b \\u043f\\u0440\\u0438\\u043b\\u043e\\u0436\\u0435\\u043d\\u0438\\u0435 \\u043d\\u0435 \\u043f\\u0430\\u0434\\u0430\\u043b\\u043e \\u043f\\u043e \\u043f\\u0430\\u043c\\u044f\\u0442\\u0438.".encode("utf-8").decode("unicode_escape"))
 
 editor_df = show_df.head(limit).copy()
 
@@ -292,17 +298,17 @@ edited_show_df = st.data_editor(
 c1, c2 = st.columns([1, 5])
 
 with c1:
-    if st.button("????????? ?????????"):
+    if st.button("\\u0421\\u043e\\u0445\\u0440\\u0430\\u043d\\u0438\\u0442\\u044c \\u0438\\u0437\\u043c\\u0435\\u043d\\u0435\\u043d\\u0438\\u044f".encode("utf-8").decode("unicode_escape")):
         try:
             save_main_editor_changes(edited_show_df)
-            st.success("????????? ????????? ? data.csv")
+            st.success("\\u0418\\u0437\\u043c\\u0435\\u043d\\u0435\\u043d\\u0438\\u044f \\u0441\\u043e\\u0445\\u0440\\u0430\\u043d\\u0435\\u043d\\u044b \\u0432 data.csv".encode("utf-8").decode("unicode_escape"))
             st.rerun()
         except Exception as e:
-            st.error(f"?????? ??????????: {e}")
+            st.error("Save error: " + str(e))
 
 csv_data = show_df.to_csv(index=False).encode("utf-8-sig")
 st.download_button(
-    label="??????? CSV",
+    label="\\u0421\\u043a\\u0430\\u0447\\u0430\\u0442\\u044c CSV".encode("utf-8").decode("unicode_escape"),
     data=csv_data,
     file_name="tg_filtered_posts.csv",
     mime="text/csv",
