@@ -1,238 +1,198 @@
-from comments_manual import apply_comment_overrides, save_comment_overrides_from_editor
+
 from pathlib import Path
 import re
-
 import pandas as pd
-# COMMENTS_OVERRIDE_MONKEYPATCH
-_original_read_excel = pd.read_excel
-_original_read_csv = pd.read_csv
-
-def _needs_comment_override(path_like):
-    try:
-        s = str(path_like).lower()
-    except Exception:
-        return False
-    return (("tg_muztv_archive_period" in s) or ("data.csv" in s)) and ("xlsx" in s or "csv" in s)
-
-def _read_excel_with_comment_overrides(*args, **kwargs):
-    df = _original_read_excel(*args, **kwargs)
-    src = args[0] if args else kwargs.get("io")
-    if _needs_comment_override(src) and isinstance(df, pd.DataFrame) and "post_url" in df.columns:
-        df = apply_comment_overrides(df)
-    return df
-
-def _read_csv_with_comment_overrides(*args, **kwargs):
-    df = _original_read_csv(*args, **kwargs)
-    src = args[0] if args else kwargs.get("filepath_or_buffer")
-    if _needs_comment_override(src) and isinstance(df, pd.DataFrame) and "post_url" in df.columns:
-        df = apply_comment_overrides(df)
-    return df
-
-pd.read_excel = _read_excel_with_comment_overrides
-pd.read_csv = _read_csv_with_comment_overrides
-
 import streamlit as st
 
 BASE_DIR = Path(__file__).resolve().parent
-OUTPUT_DIR = BASE_DIR / "output"
+DATA_PATH = BASE_DIR / "data.csv"
 
 
-def norm(text: str) -> str:
-    return re.sub(r"\s+", " ", str(text or "").lower().replace("ё", "е")).strip()
-
-
-def split_tokens(text: str):
-    raw = norm(text)
-    parts = re.split(r"[^a-zа-я0-9]+", raw)
-    return [p for p in parts if len(p) >= 4]
+def norm(text) -> str:
+    return re.sub(r"\s+", " ", str(text or "").lower().replace("?", "?")).strip()
 
 
 @st.cache_data
-def load_archive():
-    xlsx_path = BASE_DIR / "data.csv"
-    csv_path = BASE_DIR / "data.csv"
+def load_data():
+    if not DATA_PATH.exists():
+        return pd.DataFrame()
 
-    if xlsx_path.exists():
-        return pd.read_csv(xlsx_path)
-    if csv_path.exists():
-        return pd.read_csv(csv_path)
+    df = pd.read_csv(DATA_PATH)
 
-    return pd.DataFrame(columns=[
-        "source",
-        "channel_name",
-        "post_id",
-        "post_url",
+    for col in ["post_url", "post_text", "published_at"]:
+        if col not in df.columns:
+            df[col] = ""
+
+    numeric_cols = ["views", "likes_visible", "comments_visible", "reposts_visible"]
+    for col in numeric_cols:
+        if col not in df.columns:
+            df[col] = 0
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    try:
+        df["published_at_dt"] = pd.to_datetime(df["published_at"], errors="coerce")
+    except Exception:
+        df["published_at_dt"] = pd.NaT
+
+    df["post_url"] = df["post_url"].astype(str).str.strip()
+    df["post_text"] = df["post_text"].astype(str)
+
+    return df
+
+
+def save_main_editor_changes(edited_df: pd.DataFrame):
+    full_df = pd.read_csv(DATA_PATH)
+
+    if "post_url" not in full_df.columns:
+        raise ValueError("? data.csv ??? ??????? post_url")
+
+    full_df["post_url"] = full_df["post_url"].astype(str).str.strip()
+    edited_df = edited_df.copy()
+    edited_df["post_url"] = edited_df["post_url"].astype(str).str.strip()
+
+    for _, row in edited_df.iterrows():
+        mask = full_df["post_url"] == row["post_url"]
+        if not mask.any():
+            continue
+        for col in edited_df.columns:
+            if col in full_df.columns:
+                full_df.loc[mask, col] = row[col]
+
+    full_df.to_csv(DATA_PATH, index=False, encoding="utf-8-sig")
+    load_data.clear()
+
+
+st.set_page_config(page_title="MUZTV Telegram Monitor", layout="wide")
+
+st.title("MUZTV Telegram Monitor")
+st.caption("????????? ???-?????? ?? ?????? Telegram MUZ-TV")
+
+df = load_data()
+
+if df.empty:
+    st.warning("????? Telegram ???? ?? ?????? ??? ????.")
+    st.stop()
+
+min_date = None
+max_date = None
+if df["published_at_dt"].notna().any():
+    min_date = df["published_at_dt"].min().date()
+    max_date = df["published_at_dt"].max().date()
+
+with st.sidebar:
+    st.header("????????? ??????")
+    artist = st.text_input("??????", "")
+    aliases_raw = st.text_input("?????? ????? ???????", "")
+
+    if min_date and max_date:
+        date_from = st.date_input("???? ?", value=min_date)
+        date_to = st.date_input("???? ??", value=max_date)
+    else:
+        date_from = None
+        date_to = None
+
+aliases = [x.strip() for x in aliases_raw.split(",") if x.strip()]
+search_terms = [artist.strip()] + aliases if artist.strip() else aliases
+search_terms = [norm(x) for x in search_terms if x.strip()]
+
+filtered_df = df.copy()
+
+if date_from is not None and "published_at_dt" in filtered_df.columns:
+    filtered_df = filtered_df[
+        filtered_df["published_at_dt"].dt.date >= date_from
+    ]
+
+if date_to is not None and "published_at_dt" in filtered_df.columns:
+    filtered_df = filtered_df[
+        filtered_df["published_at_dt"].dt.date <= date_to
+    ]
+
+if search_terms:
+    text_norm = (
+        filtered_df["post_text"].fillna("").map(norm)
+        + " "
+        + filtered_df["post_url"].fillna("").map(norm)
+    )
+
+    mask = pd.Series(False, index=filtered_df.index)
+    for term in search_terms:
+        mask = mask | text_norm.str.contains(re.escape(term), na=False)
+
+    filtered_df = filtered_df[mask]
+
+posts_total = int(len(filtered_df))
+likes_total = int(filtered_df["likes_visible"].sum()) if "likes_visible" in filtered_df.columns else 0
+comments_total = int(filtered_df["comments_visible"].sum()) if "comments_visible" in filtered_df.columns else 0
+reposts_total = int(filtered_df["reposts_visible"].sum()) if "reposts_visible" in filtered_df.columns else 0
+views_total = int(filtered_df["views"].sum()) if "views" in filtered_df.columns else 0
+
+erv_percent = 0.0
+if views_total > 0:
+    erv_percent = round((likes_total + comments_total + reposts_total) / views_total * 100, 2)
+
+m1, m2, m3, m4, m5, m6 = st.columns(6)
+m1.metric("?????", posts_total)
+m2.metric("?????", likes_total)
+m3.metric("???????????", comments_total)
+m4.metric("???????", reposts_total)
+m5.metric("?????????", views_total)
+m6.metric("ERV %", f"{erv_percent:.2f}")
+
+st.caption(
+    f"ERV = (????? {likes_total} + ??????????? {comments_total} + ??????? {reposts_total}) / ????????? {views_total}"
+)
+
+show_cols = [
+    c for c in [
         "published_at",
-        "post_text",
+        "post_url",
         "views",
         "likes_visible",
         "comments_visible",
         "reposts_visible",
-        "page_number",
-        "raw_html",
-    ])
-
-
-def calc_erv(likes, comments, reposts, views):
-    if not views:
-        return 0.0
-    return round(((likes + comments + reposts) / views) * 100, 2)
-
-
-st.set_page_config(
-    page_title="MUZTV Telegram Monitor",
-    page_icon="📊",
-    layout="wide",
-)
-
-st.title("MUZTV Telegram Monitor")
-st.caption("Локальная веб-версия по архиву Telegram MUZ-TV")
-df = load_archive()
-
-if df.empty:
-    st.warning("Архив Telegram пока не найден или пуст.")
-    st.stop()
-
-for col in ["views", "likes_visible", "comments_visible", "reposts_visible"]:
-    if col not in df.columns:
-        df[col] = 0
-    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
-
-if "published_at" in df.columns:
-    df["published_at"] = pd.to_datetime(df["published_at"], errors="coerce")
-
-min_date = df["published_at"].dropna().min()
-max_date = df["published_at"].dropna().max()
-
-with st.sidebar:
-    st.header("Параметры поиска")
-    artist_name = st.text_input("Артист", "")
-    aliases_raw = st.text_input("Алиасы через запятую", "")
-    date_from = st.date_input("Дата с", value=min_date.date() if pd.notna(min_date) else None)
-    date_to = st.date_input("Дата по", value=max_date.date() if pd.notna(max_date) else None)
-
-filtered = df.copy()
-
-if artist_name.strip():
-    aliases = [artist_name] + [x.strip() for x in aliases_raw.split(",") if x.strip()]
-    aliases_norm = [norm(x) for x in aliases if x.strip()]
-
-    token_set = set()
-    for alias in aliases:
-        for token in split_tokens(alias):
-            token_set.add(token)
-
-    keep_mask = []
-
-    for _, row in filtered.iterrows():
-        post_text = str(row.get("post_text", "") or "")
-        raw_html = str(row.get("raw_html", "") or "")
-        haystack = norm(post_text + " " + raw_html)
-
-        matched = False
-
-        for alias in aliases_norm:
-            if alias and alias in haystack:
-                matched = True
-                break
-
-        if not matched:
-            for token in token_set:
-                if token and token in haystack:
-                    matched = True
-                    break
-
-        keep_mask.append(matched)
-
-    filtered = filtered[keep_mask].copy()
-
-if "published_at" in filtered.columns:
-    filtered = filtered[
-        (filtered["published_at"].dt.date >= date_from) &
-        (filtered["published_at"].dt.date <= date_to)
-    ].copy()
-
-filtered = filtered.sort_values(by="published_at", ascending=False).reset_index(drop=True)
-
-posts_count = len(filtered)
-likes_total = int(filtered["likes_visible"].sum())
-comments_total = int(filtered["comments_visible"].sum())
-reposts_total = int(filtered["reposts_visible"].sum())
-views_total = int(filtered["views"].sum())
-erv_total = calc_erv(likes_total, comments_total, reposts_total, views_total)
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-
-c1.metric("Посты", len(filtered))
-c2.metric("Лайки", int(filtered["likes_visible"].sum()))
-c3.metric("Комментарии", int(filtered["comments_visible"].sum()))
-c4.metric("Репосты", int(filtered["reposts_visible"].sum()))
-c5.metric("Просмотры", int(filtered["views"].sum()))
-c6.metric(
-    "ERV %",
-    f'{calc_erv(int(filtered["likes_visible"].sum()), int(filtered["comments_visible"].sum()), int(filtered["reposts_visible"].sum()), int(filtered["views"].sum())):.2f}'
-)
-
-st.caption(f'ERV = (лайки {int(filtered["likes_visible"].sum())} + комментарии {int(filtered["comments_visible"].sum())} + репосты {int(filtered["reposts_visible"].sum())}) / просмотры {int(filtered["views"].sum())}')
-st.divider()
-
-show_df = filtered.copy()
-
-if "published_at" in show_df.columns:
-    show_df["published_at"] = show_df["published_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
-
-desired_columns = [
-    "published_at",
-    "post_url",
-    "views",
-    "likes_visible",
-    "comments_visible",
-    "reposts_visible",
-    "post_text",
+    ]
+    if c in filtered_df.columns
 ]
 
-existing_columns = [c for c in desired_columns if c in show_df.columns]
-show_df = show_df[existing_columns]
+show_df = filtered_df[show_cols].copy()
 
-st.subheader("Найденные посты")
+if "published_at" in show_df.columns:
+    try:
+        show_df = show_df.sort_values("published_at", ascending=False)
+    except Exception:
+        pass
+
+st.subheader("????????? ?????")
+
+limit = min(len(show_df), 200)
+if len(show_df) > 200:
+    st.info("??? ?????????????? ???????? ?????? 200 ????? ???????? ???????, ????? ?????????? ?? ?????? ?? ??????.")
+
+editor_df = show_df.head(limit).copy()
 
 edited_show_df = st.data_editor(
-    show_df,
+    editor_df,
     use_container_width=True,
     hide_index=True,
     num_rows="fixed",
     key="main_editor_table",
 )
 
-save_col1, save_col2 = st.columns([1, 4])
+c1, c2 = st.columns([1, 5])
 
-with save_col1:
-    if st.button("Сохранить изменения"):
-        try:
-            data_path = BASE_DIR / "data.csv"
-            edited_show_df.to_csv(data_path, index=False, encoding="utf-8-sig")
-            st.success("Изменения сохранены в data.csv")
-        except Exception as e:
-            st.error(f"Ошибка сохранения: {e}")
-
-save_col1, save_col2 = st.columns([1, 4])
-
-with save_col1:
+with c1:
     if st.button("????????? ?????????"):
         try:
-            data_path = BASE_DIR / "data.csv"
-            edited_show_df.to_csv(data_path, index=False, encoding="utf-8-sig")
+            save_main_editor_changes(edited_show_df)
             st.success("????????? ????????? ? data.csv")
+            st.rerun()
         except Exception as e:
             st.error(f"?????? ??????????: {e}")
 
-csv_data = edited_show_df.to_csv(index=False).encode("utf-8-sig")
+csv_data = show_df.to_csv(index=False).encode("utf-8-sig")
 st.download_button(
-    label="Скачать CSV",
+    label="??????? CSV",
     data=csv_data,
     file_name="tg_filtered_posts.csv",
     mime="text/csv",
 )
-
-
-
-
