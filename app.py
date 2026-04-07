@@ -28,9 +28,7 @@ CYR_TO_LAT = str.maketrans({
 
 def generate_term_variants(term: str):
     base = norm(term)
-    variants = {base}
-    variants.add(base.translate(LAT_TO_CYR))
-    variants.add(base.translate(CYR_TO_LAT))
+    variants = {base, base.translate(LAT_TO_CYR), base.translate(CYR_TO_LAT)}
     return [v for v in variants if v]
 
 
@@ -82,17 +80,11 @@ def load_data():
 
     df["post_url"] = df["post_url"].astype(str).str.strip()
 
-    # ???? post_text ??????, ?????????? raw_html ??? ????????? ????
-    if "search_text" not in df.columns:
-        df["search_text"] = ""
-
-    df["search_text"] = df["post_text"]
-    empty_mask = df["search_text"].astype(str).str.strip().eq("")
-    df["search_text"] = df["search_text"].astype(str)
-df["raw_html"] = df["raw_html"].astype(str)
-df["search_text"] = df["search_text"].astype(str)
-df["raw_html"] = df["raw_html"].astype(str)
-df.loc[empty_mask, "search_text"] = df.loc[empty_mask, "raw_html"].astype(str).astype(str)
+    search_text = df["post_text"].astype(str).copy()
+    empty_mask = search_text.str.strip().eq("")
+    raw_html_as_text = df["raw_html"].astype(str)
+    search_text.loc[empty_mask] = raw_html_as_text.loc[empty_mask]
+    df["search_text"] = search_text
 
     return df
 
@@ -161,14 +153,10 @@ for term in search_terms:
 filtered_df = df.copy()
 
 if date_from is not None and "published_at_dt" in filtered_df.columns:
-    filtered_df = filtered_df[
-        filtered_df["published_at_dt"].dt.date >= date_from
-    ]
+    filtered_df = filtered_df[filtered_df["published_at_dt"].dt.date >= date_from]
 
 if date_to is not None and "published_at_dt" in filtered_df.columns:
-    filtered_df = filtered_df[
-        filtered_df["published_at_dt"].dt.date <= date_to
-    ]
+    filtered_df = filtered_df[filtered_df["published_at_dt"].dt.date <= date_to]
 
 if patterns:
     combined_text = (
