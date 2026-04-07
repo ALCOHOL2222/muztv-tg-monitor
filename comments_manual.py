@@ -1,7 +1,7 @@
 ﻿from pathlib import Path
 import pandas as pd
 
-COMMENTS_OVERRIDE_PATH = Path("output") / "comments_manual_overrides.csv"
+COMMENTS_OVERRIDE_PATH = Path("comments_manual_overrides.csv")
 
 
 def _safe_int_series(series):
