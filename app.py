@@ -199,42 +199,42 @@ if "applied_date_from" not in st.session_state:
 if "applied_date_to" not in st.session_state:
     st.session_state["applied_date_to"] = max_date
 
+def apply_filters():
+    st.session_state["applied_artist"] = st.session_state.get("artist_input", "")
+    st.session_state["applied_aliases"] = st.session_state.get("aliases_input", "")
+    st.session_state["applied_date_from"] = st.session_state.get("date_from_input", min_date)
+    st.session_state["applied_date_to"] = st.session_state.get("date_to_input", max_date)
+
 with st.sidebar:
     st.header("Search parameters")
 
-    input_artist = st.text_input(
+    st.text_input(
         "Artist",
         value=st.session_state["applied_artist"],
-        key="artist_input"
+        key="artist_input",
+        on_change=apply_filters,
     )
 
-    input_aliases = st.text_input(
+    st.text_input(
         "Aliases (comma separated)",
         value=st.session_state["applied_aliases"],
-        key="aliases_input"
+        key="aliases_input",
+        on_change=apply_filters,
     )
 
     if min_date and max_date:
-        input_date_from = st.date_input(
+        st.date_input(
             "Date from",
             value=st.session_state["applied_date_from"] or min_date,
-            key="date_from_input"
+            key="date_from_input",
+            on_change=apply_filters,
         )
-        input_date_to = st.date_input(
+        st.date_input(
             "Date to",
             value=st.session_state["applied_date_to"] or max_date,
-            key="date_to_input"
+            key="date_to_input",
+            on_change=apply_filters,
         )
-    else:
-        input_date_from = None
-        input_date_to = None
-
-    if st.button("Search", type="primary", use_container_width=True):
-        st.session_state["applied_artist"] = input_artist
-        st.session_state["applied_aliases"] = input_aliases
-        st.session_state["applied_date_from"] = input_date_from
-        st.session_state["applied_date_to"] = input_date_to
-        st.rerun()
 
 artist = st.session_state["applied_artist"]
 aliases_raw = st.session_state["applied_aliases"]
