@@ -49,11 +49,11 @@ def split_tokens(text: str):
 
 @st.cache_data
 def load_archive():
-    xlsx_path = OUTPUT_DIR / "tg_muztv_archive_period_enriched_exact_comments_loggedin_v2.xlsx"
-    csv_path = OUTPUT_DIR / "tg_muztv_archive_period_enriched_exact_comments_loggedin_v2.csv"
+    xlsx_path = BASE_DIR / "data.csv"
+    csv_path = BASE_DIR / "data.csv"
 
     if xlsx_path.exists():
-        return pd.read_excel(xlsx_path)
+        return pd.read_csv(xlsx_path)
     if csv_path.exists():
         return pd.read_csv(csv_path)
 
