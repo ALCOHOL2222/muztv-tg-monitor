@@ -9,37 +9,20 @@ DATA_PATH = BASE_DIR / "data.csv"
 
 
 def norm(text) -> str:
-    return re.sub(r"\s+", " ", str(text or "").lower().replace("?", "?")).strip()
+    text = str(text or "").lower().replace("?", "?")
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 LAT_TO_CYR = str.maketrans({
-    "a": "?",
-    "b": "?",
-    "c": "?",
-    "e": "?",
-    "h": "?",
-    "k": "?",
-    "m": "?",
-    "o": "?",
-    "p": "?",
-    "t": "?",
-    "x": "?",
-    "y": "?",
+    "a": "?", "b": "?", "c": "?", "e": "?", "h": "?", "k": "?",
+    "m": "?", "o": "?", "p": "?", "t": "?", "x": "?", "y": "?",
 })
 
 CYR_TO_LAT = str.maketrans({
-    "?": "a",
-    "?": "b",
-    "?": "c",
-    "?": "e",
-    "?": "h",
-    "?": "k",
-    "?": "m",
-    "?": "o",
-    "?": "p",
-    "?": "t",
-    "?": "x",
-    "?": "y",
+    "?": "a", "?": "b", "?": "c", "?": "e", "?": "h", "?": "k",
+    "?": "m", "?": "o", "?": "p", "?": "t", "?": "x", "?": "y",
 })
 
 
@@ -71,10 +54,16 @@ def load_data():
 
     df = pd.read_csv(DATA_PATH)
 
-    if "post_url" not in df.columns:
-        df["post_url"] = ""
-    if "published_at" not in df.columns:
-        df["published_at"] = ""
+    defaults = {
+        "post_url": "",
+        "published_at": "",
+        "post_text": "",
+        "raw_html": "",
+        "processed_comments": "",
+    }
+    for col, val in defaults.items():
+        if col not in df.columns:
+            df[col] = val
 
     numeric_cols = ["views", "likes_visible", "comments_visible", "reposts_visible"]
     for col in numeric_cols:
@@ -92,6 +81,15 @@ def load_data():
             df[col] = df[col].fillna("").astype(str)
 
     df["post_url"] = df["post_url"].astype(str).str.strip()
+
+    # ???? post_text ??????, ?????????? raw_html ??? ????????? ????
+    if "search_text" not in df.columns:
+        df["search_text"] = ""
+
+    df["search_text"] = df["post_text"]
+    empty_mask = df["search_text"].astype(str).str.strip().eq("")
+    df.loc[empty_mask, "search_text"] = df.loc[empty_mask, "raw_html"]
+
     return df
 
 
@@ -120,12 +118,12 @@ def save_main_editor_changes(edited_df: pd.DataFrame):
 st.set_page_config(page_title="MUZTV Telegram Monitor", layout="wide")
 
 st.title("MUZTV Telegram Monitor")
-st.caption("\u0412\u0435\u0431-\u0432\u0435\u0440\u0441\u0438\u044f \u043f\u043e \u0430\u0440\u0445\u0438\u0432\u0443 Telegram MUZ-TV")
+st.caption("???-?????? ?? ?????? Telegram MUZ-TV")
 
 df = load_data()
 
 if df.empty:
-    st.warning("\u0410\u0440\u0445\u0438\u0432 Telegram \u043f\u043e\u043a\u0430 \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d \u0438\u043b\u0438 \u043f\u0443\u0441\u0442.")
+    st.warning("????? Telegram ???? ?? ?????? ??? ????.")
     st.stop()
 
 min_date = None
@@ -135,13 +133,13 @@ if df["published_at_dt"].notna().any():
     max_date = df["published_at_dt"].max().date()
 
 with st.sidebar:
-    st.header("\u041f\u0430\u0440\u0430\u043c\u0435\u0442\u0440\u044b \u043f\u043e\u0438\u0441\u043a\u0430")
-    artist = st.text_input("\u0410\u0440\u0442\u0438\u0441\u0442", "")
-    aliases_raw = st.text_input("\u0410\u043b\u0438\u0430\u0441\u044b \u0447\u0435\u0440\u0435\u0437 \u0437\u0430\u043f\u044f\u0442\u0443\u044e", "")
+    st.header("????????? ??????")
+    artist = st.text_input("??????", "")
+    aliases_raw = st.text_input("?????? ????? ???????", "")
 
     if min_date and max_date:
-        date_from = st.date_input("\u0414\u0430\u0442\u0430 \u0441", value=min_date)
-        date_to = st.date_input("\u0414\u0430\u0442\u0430 \u043f\u043e", value=max_date)
+        date_from = st.date_input("???? ?", value=min_date)
+        date_to = st.date_input("???? ??", value=max_date)
     else:
         date_from = None
         date_to = None
@@ -168,18 +166,14 @@ if date_to is not None and "published_at_dt" in filtered_df.columns:
         filtered_df["published_at_dt"].dt.date <= date_to
     ]
 
-text_cols = [
-    c for c in filtered_df.columns
-    if c not in ["published_at_dt"]
-    and filtered_df[c].dtype == "object"
-]
-
 if patterns:
-    combined_text = pd.Series("", index=filtered_df.index, dtype="object")
-    for col in text_cols:
-        combined_text = combined_text + " " + filtered_df[col].fillna("").astype(str)
-
-    combined_text = combined_text.map(norm)
+    combined_text = (
+        filtered_df["search_text"].fillna("").astype(str)
+        + " "
+        + filtered_df["processed_comments"].fillna("").astype(str)
+        + " "
+        + filtered_df["post_url"].fillna("").astype(str)
+    ).map(norm)
 
     mask = pd.Series(False, index=filtered_df.index)
     for pattern in patterns:
@@ -198,15 +192,15 @@ if views_total > 0:
     erv_percent = round((likes_total + comments_total + reposts_total) / views_total * 100, 2)
 
 m1, m2, m3, m4, m5, m6 = st.columns(6)
-m1.metric("\u041f\u043e\u0441\u0442\u044b", posts_total)
-m2.metric("\u041b\u0430\u0439\u043a\u0438", likes_total)
-m3.metric("\u041a\u043e\u043c\u043c\u0435\u043d\u0442\u0430\u0440\u0438\u0438", comments_total)
-m4.metric("\u0420\u0435\u043f\u043e\u0441\u0442\u044b", reposts_total)
-m5.metric("\u041f\u0440\u043e\u0441\u043c\u043e\u0442\u0440\u044b", views_total)
+m1.metric("?????", posts_total)
+m2.metric("?????", likes_total)
+m3.metric("???????????", comments_total)
+m4.metric("???????", reposts_total)
+m5.metric("?????????", views_total)
 m6.metric("ERV %", f"{erv_percent:.2f}")
 
 st.caption(
-    f"ERV = (\u043b\u0430\u0439\u043a\u0438 {likes_total} + \u043a\u043e\u043c\u043c\u0435\u043d\u0442\u0430\u0440\u0438\u0438 {comments_total} + \u0440\u0435\u043f\u043e\u0441\u0442\u044b {reposts_total}) / \u043f\u0440\u043e\u0441\u043c\u043e\u0442\u0440\u044b {views_total}"
+    f"ERV = (????? {likes_total} + ??????????? {comments_total} + ??????? {reposts_total}) / ????????? {views_total}"
 )
 
 show_cols = [
@@ -217,17 +211,16 @@ show_cols = [
         "likes_visible",
         "comments_visible",
         "reposts_visible",
-        "post_text",
-        "text",
-        "message",
-        "caption",
-        "title",
-        "content",
+        "search_text",
     ]
     if c in filtered_df.columns
 ]
 
 show_df = filtered_df[show_cols].copy()
+
+if "search_text" in show_df.columns:
+    show_df["search_text"] = show_df["search_text"].astype(str).str.replace(r"<[^>]+>", " ", regex=True)
+    show_df["search_text"] = show_df["search_text"].str.replace(r"\s+", " ", regex=True).str.slice(0, 300)
 
 if "published_at" in show_df.columns:
     try:
@@ -235,11 +228,11 @@ if "published_at" in show_df.columns:
     except Exception:
         pass
 
-st.subheader("\u041d\u0430\u0439\u0434\u0435\u043d\u043d\u044b\u0435 \u043f\u043e\u0441\u0442\u044b")
+st.subheader("????????? ?????")
 
 limit = min(len(show_df), 200)
 if len(show_df) > 200:
-    st.info("\u0414\u043b\u044f \u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u044f \u043f\u043e\u043a\u0430\u0437\u0430\u043d\u044b \u043f\u0435\u0440\u0432\u044b\u0435 200 \u0441\u0442\u0440\u043e\u043a \u0442\u0435\u043a\u0443\u0449\u0435\u0433\u043e \u0444\u0438\u043b\u044c\u0442\u0440\u0430, \u0447\u0442\u043e\u0431\u044b \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0435 \u043d\u0435 \u043f\u0430\u0434\u0430\u043b\u043e \u043f\u043e \u043f\u0430\u043c\u044f\u0442\u0438.")
+    st.info("??? ?????????????? ???????? ?????? 200 ????? ???????? ???????, ????? ?????????? ?? ?????? ?? ??????.")
 
 editor_df = show_df.head(limit).copy()
 
@@ -254,17 +247,17 @@ edited_show_df = st.data_editor(
 c1, c2 = st.columns([1, 5])
 
 with c1:
-    if st.button("\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f"):
+    if st.button("????????? ?????????"):
         try:
             save_main_editor_changes(edited_show_df)
-            st.success("\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u044b \u0432 data.csv")
+            st.success("????????? ????????? ? data.csv")
             st.rerun()
         except Exception as e:
-            st.error(f"\u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u044f: {e}")
+            st.error(f"?????? ??????????: {e}")
 
 csv_data = show_df.to_csv(index=False).encode("utf-8-sig")
 st.download_button(
-    label="\u0421\u043a\u0430\u0447\u0430\u0442\u044c CSV",
+    label="??????? CSV",
     data=csv_data,
     file_name="tg_filtered_posts.csv",
     mime="text/csv",
