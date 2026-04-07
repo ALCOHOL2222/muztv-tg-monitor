@@ -192,15 +192,18 @@ if df["published_at_dt"].notna().any():
 
 with st.sidebar:
     st.header("Search parameters")
-    artist = st.text_input("Artist", "")
-    aliases_raw = st.text_input("Aliases (comma separated)", "")
+    with st.form("search_form"):
+        artist = st.text_input("Artist", "")
+        aliases_raw = st.text_input("Aliases (comma separated)", "")
 
-    if min_date and max_date:
-        date_from = st.date_input("Date from", value=min_date)
-        date_to = st.date_input("Date to", value=max_date)
-    else:
-        date_from = None
-        date_to = None
+        if min_date and max_date:
+            date_from = st.date_input("Date from", value=min_date)
+            date_to = st.date_input("Date to", value=max_date)
+        else:
+            date_from = None
+            date_to = None
+
+        submitted = st.form_submit_button("Search")
 
 aliases = [x.strip() for x in aliases_raw.split(",") if x.strip()]
 search_terms = []
