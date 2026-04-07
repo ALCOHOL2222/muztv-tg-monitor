@@ -88,7 +88,11 @@ def load_data():
 
     df["search_text"] = df["post_text"]
     empty_mask = df["search_text"].astype(str).str.strip().eq("")
-    df.loc[empty_mask, "search_text"] = df.loc[empty_mask, "raw_html"]
+    df["search_text"] = df["search_text"].astype(str)
+df["raw_html"] = df["raw_html"].astype(str)
+df["search_text"] = df["search_text"].astype(str)
+df["raw_html"] = df["raw_html"].astype(str)
+df.loc[empty_mask, "search_text"] = df.loc[empty_mask, "raw_html"].astype(str).astype(str)
 
     return df
 
