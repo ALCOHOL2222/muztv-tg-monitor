@@ -194,9 +194,38 @@ existing_columns = [c for c in desired_columns if c in show_df.columns]
 show_df = show_df[existing_columns]
 
 st.subheader("Найденные посты")
-st.dataframe(show_df, use_container_width=True)
 
-csv_data = show_df.to_csv(index=False).encode("utf-8-sig")
+edited_show_df = st.data_editor(
+    show_df,
+    use_container_width=True,
+    hide_index=True,
+    num_rows="fixed",
+    key="main_editor_table",
+)
+
+save_col1, save_col2 = st.columns([1, 4])
+
+with save_col1:
+    if st.button("Сохранить изменения"):
+        try:
+            data_path = BASE_DIR / "data.csv"
+            edited_show_df.to_csv(data_path, index=False, encoding="utf-8-sig")
+            st.success("Изменения сохранены в data.csv")
+        except Exception as e:
+            st.error(f"Ошибка сохранения: {e}")
+
+save_col1, save_col2 = st.columns([1, 4])
+
+with save_col1:
+    if st.button("????????? ?????????"):
+        try:
+            data_path = BASE_DIR / "data.csv"
+            edited_show_df.to_csv(data_path, index=False, encoding="utf-8-sig")
+            st.success("????????? ????????? ? data.csv")
+        except Exception as e:
+            st.error(f"?????? ??????????: {e}")
+
+csv_data = edited_show_df.to_csv(index=False).encode("utf-8-sig")
 st.download_button(
     label="Скачать CSV",
     data=csv_data,
