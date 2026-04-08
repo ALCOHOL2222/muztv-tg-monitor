@@ -308,9 +308,19 @@ elif sort_by == "Reposts desc" and "reposts_visible" in show_df.columns:
 
 st.subheader("Found posts")
 
-limit = min(len(show_df), 200)
-if len(show_df) > 200:
-    st.info("Only the first 200 rows of the current filter are shown in the editor to avoid memory issues.")
+editor_limit_option = st.selectbox(
+    "Rows in editor",
+    ["200", "500", "1000", "All"],
+    index=0,
+)
+
+if editor_limit_option == "All":
+    limit = len(show_df)
+else:
+    limit = min(len(show_df), int(editor_limit_option))
+
+if editor_limit_option != "All" and len(show_df) > limit:
+    st.info(f"Only the first {limit} rows of the current filter are shown in the editor.")
 
 editor_df = show_df.head(limit).copy()
 disabled_cols = [c for c in editor_df.columns if c != "comments_visible"]
