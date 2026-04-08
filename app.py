@@ -50,18 +50,18 @@ def generate_term_variants(term: str):
 
 
 def token_pattern(token: str) -> str:
-    token = token.strip()
+    token = token.strip().lower().replace("?", "?")
     if not token:
         return ""
 
     # short aliases like MOT / ??? -> exact word only
     if len(token) <= 3:
-        return rf"\b{re.escape(token)}\b"
+        return rf"(?<![\u0400-\u04FFA-Za-z0-9_]){re.escape(token)}(?![\u0400-\u04FFA-Za-z0-9_])"
 
     # inflection-tolerant prefix for regular names
     stem_len = max(3, len(token) - 2)
     stem = token[:stem_len]
-    return rf"\b{re.escape(stem)}[A-Za-z?-??-???0-9_-]*"
+    return rf"(?<![\u0400-\u04FFA-Za-z0-9_]){re.escape(stem)}[\u0400-\u04FFA-Za-z-]*(?![\u0400-\u04FFA-Za-z0-9_])"
 
 
 def build_term_regex(term: str):
@@ -74,23 +74,9 @@ def build_term_regex(term: str):
 
         parts = []
         for token in tokens:
-            token = token.strip().lower().replace("\u0451", "\u0435")
-            token = token.encode("utf-8").decode("unicode_escape")
-            if not token:
-                continue
-
-            # short aliases like MOT / ??? -> exact word only
-            if len(token) <= 3:
-                parts.append(
-                    rf"(?<![\u0400-\u04FFA-Za-z0-9_]){re.escape(token)}(?![\u0400-\u04FFA-Za-z0-9_])"
-                )
-            else:
-                # inflection-tolerant prefix: ????? -> ?????? / ???????
-                stem_len = max(3, len(token) - 2)
-                stem = token[:stem_len]
-                parts.append(
-                    rf"(?<![\u0400-\u04FFA-Za-z0-9_]){re.escape(stem)}[\u0400-\u04FF-]*(?![\u0400-\u04FFA-Za-z0-9_])"
-                )
+            part = token_pattern(token)
+            if part:
+                parts.append(part)
 
         if not parts:
             continue
@@ -102,7 +88,6 @@ def build_term_regex(term: str):
             regexes.append(re.compile(pattern, re.IGNORECASE | re.DOTALL))
 
     return regexes
-
 
 @st.cache_data
 def load_data():
