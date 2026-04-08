@@ -228,10 +228,10 @@ if date_to is not None and "published_at_dt" in filtered_df.columns:
 
 if term_regexes:
     search_blob = (
-        filtered_df["visible_text"].fillna("").astype(str)
-        + " "
-        + filtered_df["comments_text"].fillna("").astype(str)
-    ).map(norm)
+    filtered_df.fillna("").astype(str)
+    .agg(" ".join, axis=1)
+    .map(norm)
+)
 
     mask = search_blob.apply(lambda x: any(r.search(x) for r in term_regexes))
     filtered_df = filtered_df[mask]
