@@ -68,27 +68,28 @@ def build_term_regex(term: str):
     regexes = []
 
     for variant in generate_term_variants(term):
-        tokens = re.findall(r"[?-??-???A-Za-z0-9-]+", variant)
+        tokens = re.findall(r"[\u0400-\u04FFA-Za-z0-9-]+", variant)
         if not tokens:
             continue
 
         parts = []
         for token in tokens:
-            token = token.strip().lower().replace("?", "?")
+            token = token.strip().lower().replace("\u0451", "\u0435")
+            token = token.encode("utf-8").decode("unicode_escape")
             if not token:
                 continue
 
-            # ??? / ??? / etc -> ?????? ?????? ?????
+            # short aliases like MOT / ??? -> exact word only
             if len(token) <= 3:
                 parts.append(
-                    rf"(?<![?-??-???A-Za-z0-9_]){re.escape(token)}(?![?-??-???A-Za-z0-9_])"
+                    rf"(?<![\u0400-\u04FFA-Za-z0-9_]){re.escape(token)}(?![\u0400-\u04FFA-Za-z0-9_])"
                 )
             else:
-                # ????? -> ?????? / ??????? / ??????
+                # inflection-tolerant prefix: ????? -> ?????? / ???????
                 stem_len = max(3, len(token) - 2)
                 stem = token[:stem_len]
                 parts.append(
-                    rf"(?<![?-??-???A-Za-z0-9_]){re.escape(stem)}[?-??-???-]*(?![?-??-???A-Za-z0-9_])"
+                    rf"(?<![\u0400-\u04FFA-Za-z0-9_]){re.escape(stem)}[\u0400-\u04FF-]*(?![\u0400-\u04FFA-Za-z0-9_])"
                 )
 
         if not parts:
