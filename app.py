@@ -218,6 +218,29 @@ st.info(
     f"max_comments={debug_max_comments}"
 )
 
+debug_target_url = "https://t.me/muztv/24579"
+debug_target_comments = None
+debug_max_comments = 0
+debug_rows_count = len(df)
+
+if not df.empty and "comments_visible" in df.columns:
+    comments_series = pd.to_numeric(df["comments_visible"], errors="coerce").fillna(0)
+    debug_max_comments = int(comments_series.max()) if len(comments_series) else 0
+
+if not df.empty and "post_url" in df.columns:
+    _match = df[df["post_url"].astype(str).str.strip() == debug_target_url]
+    if not _match.empty and "comments_visible" in _match.columns:
+        debug_target_comments = int(pd.to_numeric(_match["comments_visible"], errors="coerce").fillna(0).iloc[0])
+
+debug_file_exists = DATA_PATH.exists()
+debug_file_size = DATA_PATH.stat().st_size if debug_file_exists else -1
+
+st.info(
+    f"DEBUG | file={DATA_PATH} | exists={debug_file_exists} | size={debug_file_size} | "
+    f"rows={debug_rows_count} | target_url={debug_target_url} | target_comments={debug_target_comments} | "
+    f"max_comments={debug_max_comments}"
+)
+
 if df.empty:
     st.warning("Archive file was not found or is empty.")
     st.stop()
