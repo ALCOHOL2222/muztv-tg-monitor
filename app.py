@@ -157,7 +157,7 @@ def load_data():
         .map(norm)
     )
 
-    df["row_erv_percent"] = calc_row_erv(df)
+    df["erv_percent"] = calc_row_erv(df)
 
     return df
 
@@ -253,7 +253,7 @@ if term_regexes:
     filtered_df = filtered_df[mask]
 
 filtered_df = filtered_df.copy()
-filtered_df["row_erv_percent"] = calc_row_erv(filtered_df)
+filtered_df["erv_percent"] = calc_row_erv(filtered_df)
 
 posts_total = int(len(filtered_df))
 likes_total = int(filtered_df["likes_visible"].sum())
@@ -271,7 +271,7 @@ m2.metric("Likes", likes_total)
 m3.metric("Comments", comments_total)
 m4.metric("Reposts", reposts_total)
 m5.metric("Views", views_total)
-m6.metric("ERV %", f"{erv_percent:.2f}")
+m6.metric("ERV %", f"{erv_percent:.4f}")
 
 st.caption(
     f"ERV = (likes {likes_total} + comments {comments_total} + reposts {reposts_total}) / views {views_total}"
@@ -285,7 +285,7 @@ show_cols = [
         "likes_visible",
         "comments_visible",
         "reposts_visible",
-        "row_erv_percent",
+        "erv_percent",
         "text_preview",
     ]
     if c in filtered_df.columns
@@ -297,8 +297,8 @@ if sort_by == "Date desc" and "published_at" in show_df.columns:
     show_df = show_df.sort_values("published_at", ascending=False)
 elif sort_by == "Comments desc" and "comments_visible" in show_df.columns:
     show_df = show_df.sort_values(["comments_visible", "published_at"], ascending=[False, False])
-elif sort_by == "ERV desc" and "row_erv_percent" in show_df.columns:
-    show_df = show_df.sort_values(["row_erv_percent", "published_at"], ascending=[False, False])
+elif sort_by == "ERV desc" and "erv_percent" in show_df.columns:
+    show_df = show_df.sort_values(["erv_percent", "published_at"], ascending=[False, False])
 elif sort_by == "Views desc" and "views" in show_df.columns:
     show_df = show_df.sort_values(["views", "published_at"], ascending=[False, False])
 elif sort_by == "Likes desc" and "likes_visible" in show_df.columns:
@@ -339,8 +339,8 @@ edited_show_df = st.data_editor(
             step=1,
             help="You can edit comments manually",
         ),
-        "row_erv_percent": st.column_config.NumberColumn(
-            "row_erv_percent",
+        "erv_percent": st.column_config.NumberColumn(
+            "erv_percent",
             format="%.2f",
         ),
     },
