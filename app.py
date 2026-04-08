@@ -1,6 +1,7 @@
 ﻿from pathlib import Path
 import re
 import pandas as pd
+import requests
 import streamlit as st
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -63,7 +64,6 @@ def token_pattern(token: str) -> str:
 
 def build_term_regex(term: str):
     regexes = []
-
     for variant in generate_term_variants(term):
         tokens = re.findall(r"[\u0400-\u04FFA-Za-z0-9-]+", variant)
         if not tokens:
@@ -95,11 +95,94 @@ def calc_row_erv(df: pd.DataFrame) -> pd.Series:
 
     result = pd.Series(0.0, index=df.index)
     nonzero = views > 0
-    result.loc[nonzero] = ((likes.loc[nonzero] + comments.loc[nonzero] + reposts.loc[nonzero]) / views.loc[nonzero] * 100).round(2)
+    result.loc[nonzero] = ((likes.loc[nonzero] + comments.loc[nonzero] + reposts.loc[nonzero]) / views.loc[nonzero] * 100).round(4)
     return result
 
 
-@st.cache_data
+def get_supabase_config():
+    try:
+        url = str(st.secrets["SUPABASE_URL"]).rstrip("/")
+        key = str(st.secrets["SUPABASE_SECRET_KEY"]).strip()
+        if url and key:
+            return url, key
+    except Exception:
+        return None, None
+    return None, None
+
+
+@st.cache_data(ttl=60)
+def fetch_comment_overrides():
+    supabase_url, supabase_key = get_supabase_config()
+    if not supabase_url or not supabase_key:
+        return pd.DataFrame(columns=["post_url", "comments_visible"])
+
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+    }
+
+    all_rows = []
+    offset = 0
+    limit = 1000
+
+    while True:
+        url = f"{supabase_url}/rest/v1/comment_overrides?select=post_url,comments_visible&limit={limit}&offset={offset}"
+        r = requests.get(url, headers=headers, timeout=30)
+        if r.status_code >= 300:
+            raise RuntimeError(f"Supabase read error: {r.status_code} {r.text[:300]}")
+        rows = r.json()
+        if not rows:
+            break
+        all_rows.extend(rows)
+        if len(rows) < limit:
+            break
+        offset += limit
+
+    if not all_rows:
+        return pd.DataFrame(columns=["post_url", "comments_visible"])
+
+    df = pd.DataFrame(all_rows)
+    df["post_url"] = df["post_url"].fillna("").astype(str).str.strip()
+    df["comments_visible"] = pd.to_numeric(df["comments_visible"], errors="coerce").fillna(0).astype(int)
+    return df[["post_url", "comments_visible"]].drop_duplicates(subset=["post_url"], keep="last")
+
+
+def upsert_comment_overrides(edited_df: pd.DataFrame):
+    supabase_url, supabase_key = get_supabase_config()
+    if not supabase_url or not supabase_key:
+        raise RuntimeError("Supabase secrets are missing")
+
+    payload = edited_df[["post_url", "comments_visible"]].copy()
+    payload["post_url"] = payload["post_url"].fillna("").astype(str).str.strip()
+    payload["comments_visible"] = pd.to_numeric(payload["comments_visible"], errors="coerce").fillna(0).astype(int)
+    payload = payload[payload["post_url"] != ""]
+    payload = payload.drop_duplicates(subset=["post_url"], keep="last")
+
+    records = payload.to_dict(orient="records")
+    if not records:
+        return
+
+    headers = {
+        "apikey": supabase_key,
+        "Authorization": f"Bearer {supabase_key}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates,return=minimal",
+    }
+
+    url = f"{supabase_url}/rest/v1/comment_overrides?on_conflict=post_url"
+    chunk_size = 500
+
+    for i in range(0, len(records), chunk_size):
+        chunk = records[i:i + chunk_size]
+        r = requests.post(url, headers=headers, json=chunk, timeout=60)
+        if r.status_code >= 300:
+            raise RuntimeError(f"Supabase save error: {r.status_code} {r.text[:300]}")
+
+    fetch_comment_overrides.clear()
+    load_data.clear()
+
+
+@st.cache_data(ttl=60)
 def load_data():
     if not DATA_PATH.exists():
         return pd.DataFrame()
@@ -114,7 +197,6 @@ def load_data():
         "published_at": "",
         "post_text": "",
         "raw_html": "",
-        "processed_comments": "",
         "views": 0,
         "likes_visible": 0,
         "comments_visible": 0,
@@ -128,7 +210,7 @@ def load_data():
     for col in ["views", "likes_visible", "comments_visible", "reposts_visible"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
 
-    for col in ["source", "channel_name", "post_id", "post_url", "published_at", "post_text", "raw_html", "processed_comments"]:
+    for col in ["source", "channel_name", "post_id", "post_url", "published_at", "post_text", "raw_html"]:
         df[col] = df[col].fillna("").astype(str)
 
     df["post_url"] = df["post_url"].str.strip()
@@ -143,103 +225,25 @@ def load_data():
     visible_text.loc[empty_mask] = df.loc[empty_mask, "raw_html"]
     visible_text = visible_text.map(cleanup_text)
 
-    comments_text = df["processed_comments"].map(cleanup_text)
-
     df["visible_text"] = visible_text
-    df["comments_text"] = comments_text
     df["text_preview"] = visible_text.str.slice(0, 300)
 
-    df["searchable_text"] = (
-        df[["visible_text", "comments_text", "post_url"]]
-        .fillna("")
-        .astype(str)
-        .agg(" ".join, axis=1)
-        .map(norm)
-    )
+    overrides = fetch_comment_overrides()
+    if not overrides.empty:
+        df = df.merge(overrides, on="post_url", how="left", suffixes=("", "_override"))
+        df["comments_visible"] = df["comments_visible_override"].fillna(df["comments_visible"]).astype(int)
+        df = df.drop(columns=["comments_visible_override"], errors="ignore")
 
     df["erv_percent"] = calc_row_erv(df)
-
     return df
-
-
-def save_main_editor_changes(edited_df: pd.DataFrame):
-    full_df = pd.read_csv(DATA_PATH)
-
-    if "post_url" not in full_df.columns:
-        raise ValueError("No post_url column in data.csv")
-
-    if "comments_visible" not in full_df.columns:
-        full_df["comments_visible"] = 0
-
-    full_df["post_url"] = full_df["post_url"].fillna("").astype(str).str.strip()
-    full_df["comments_visible"] = pd.to_numeric(full_df["comments_visible"], errors="coerce").fillna(0).astype(int)
-
-    edited_df = edited_df.copy()
-    edited_df["post_url"] = edited_df["post_url"].fillna("").astype(str).str.strip()
-    edited_df["comments_visible"] = pd.to_numeric(edited_df["comments_visible"], errors="coerce").fillna(0).astype(int)
-
-    for _, row in edited_df[["post_url", "comments_visible"]].iterrows():
-        mask = full_df["post_url"] == row["post_url"]
-        if not mask.any():
-            continue
-        full_df.loc[mask, "comments_visible"] = int(row["comments_visible"])
-
-    full_df.to_csv(DATA_PATH, index=False, encoding="utf-8-sig")
-    load_data.clear()
 
 
 st.set_page_config(page_title="MUZTV Telegram Monitor", layout="wide")
 
 st.title("MUZTV Telegram Monitor")
-st.caption("Web version based on Telegram MUZ-TV archive")
+st.caption("Cloud comments source: Supabase")
 
 df = load_data()
-
-debug_target_url = "https://t.me/muztv/24579"
-debug_target_comments = None
-debug_max_comments = 0
-debug_rows_count = len(df)
-
-if not df.empty and "comments_visible" in df.columns:
-    comments_series = pd.to_numeric(df["comments_visible"], errors="coerce").fillna(0)
-    debug_max_comments = int(comments_series.max()) if len(comments_series) else 0
-
-if not df.empty and "post_url" in df.columns:
-    _match = df[df["post_url"].astype(str).str.strip() == debug_target_url]
-    if not _match.empty and "comments_visible" in _match.columns:
-        debug_target_comments = int(pd.to_numeric(_match["comments_visible"], errors="coerce").fillna(0).iloc[0])
-
-debug_file_exists = DATA_PATH.exists()
-debug_file_size = DATA_PATH.stat().st_size if debug_file_exists else -1
-
-st.info(
-    f"DEBUG | file={DATA_PATH} | exists={debug_file_exists} | size={debug_file_size} | "
-    f"rows={debug_rows_count} | target_url={debug_target_url} | target_comments={debug_target_comments} | "
-    f"max_comments={debug_max_comments}"
-)
-
-debug_target_url = "https://t.me/muztv/24579"
-debug_target_comments = None
-debug_max_comments = 0
-debug_rows_count = len(df)
-
-if not df.empty and "comments_visible" in df.columns:
-    comments_series = pd.to_numeric(df["comments_visible"], errors="coerce").fillna(0)
-    debug_max_comments = int(comments_series.max()) if len(comments_series) else 0
-
-if not df.empty and "post_url" in df.columns:
-    _match = df[df["post_url"].astype(str).str.strip() == debug_target_url]
-    if not _match.empty and "comments_visible" in _match.columns:
-        debug_target_comments = int(pd.to_numeric(_match["comments_visible"], errors="coerce").fillna(0).iloc[0])
-
-debug_file_exists = DATA_PATH.exists()
-debug_file_size = DATA_PATH.stat().st_size if debug_file_exists else -1
-
-st.info(
-    f"DEBUG | file={DATA_PATH} | exists={debug_file_exists} | size={debug_file_size} | "
-    f"rows={debug_rows_count} | target_url={debug_target_url} | target_comments={debug_target_comments} | "
-    f"max_comments={debug_max_comments}"
-)
 
 if df.empty:
     st.warning("Archive file was not found or is empty.")
@@ -265,16 +269,11 @@ with st.sidebar:
 
     sort_by = st.selectbox(
         "Sort by",
-        [
-            "Date desc",
-            "Comments desc",
-            "ERV desc",
-            "Views desc",
-            "Likes desc",
-            "Reposts desc",
-        ],
+        ["Date desc", "Comments desc", "ERV desc", "Views desc", "Likes desc", "Reposts desc"],
         index=0,
     )
+
+    row_limit = st.selectbox("Rows in editor", ["200", "500", "1000", "All"], index=0)
 
 aliases = [x.strip() for x in aliases_raw.split(",") if x.strip()]
 search_terms = []
@@ -295,7 +294,14 @@ if date_to is not None and "published_at_dt" in filtered_df.columns:
     filtered_df = filtered_df[filtered_df["published_at_dt"].dt.date <= date_to]
 
 if term_regexes:
-    mask = filtered_df["searchable_text"].apply(lambda x: any(r.search(x) for r in term_regexes))
+    search_blob = (
+        filtered_df[["visible_text", "post_url"]]
+        .fillna("")
+        .astype(str)
+        .agg(" ".join, axis=1)
+        .map(norm)
+    )
+    mask = search_blob.apply(lambda x: any(r.search(x) for r in term_regexes))
     filtered_df = filtered_df[mask]
 
 filtered_df = filtered_df.copy()
@@ -309,7 +315,7 @@ views_total = int(filtered_df["views"].sum())
 
 erv_percent = 0.0
 if views_total > 0:
-    erv_percent = round((likes_total + comments_total + reposts_total) / views_total * 100, 2)
+    erv_percent = round((likes_total + comments_total + reposts_total) / views_total * 100, 4)
 
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Posts", posts_total)
@@ -319,9 +325,7 @@ m4.metric("Reposts", reposts_total)
 m5.metric("Views", views_total)
 m6.metric("ERV %", f"{erv_percent:.4f}")
 
-st.caption(
-    f"ERV = (likes {likes_total} + comments {comments_total} + reposts {reposts_total}) / views {views_total}"
-)
+st.caption(f"ERV = (likes {likes_total} + comments {comments_total} + reposts {reposts_total}) / views {views_total}")
 
 show_cols = [
     c for c in [
@@ -341,32 +345,23 @@ show_df = filtered_df[show_cols].copy()
 
 if sort_by == "Date desc" and "published_at" in show_df.columns:
     show_df = show_df.sort_values("published_at", ascending=False)
-elif sort_by == "Comments desc" and "comments_visible" in show_df.columns:
+elif sort_by == "Comments desc":
     show_df = show_df.sort_values(["comments_visible", "published_at"], ascending=[False, False])
-elif sort_by == "ERV desc" and "erv_percent" in show_df.columns:
+elif sort_by == "ERV desc":
     show_df = show_df.sort_values(["erv_percent", "published_at"], ascending=[False, False])
-elif sort_by == "Views desc" and "views" in show_df.columns:
+elif sort_by == "Views desc":
     show_df = show_df.sort_values(["views", "published_at"], ascending=[False, False])
-elif sort_by == "Likes desc" and "likes_visible" in show_df.columns:
+elif sort_by == "Likes desc":
     show_df = show_df.sort_values(["likes_visible", "published_at"], ascending=[False, False])
-elif sort_by == "Reposts desc" and "reposts_visible" in show_df.columns:
+elif sort_by == "Reposts desc":
     show_df = show_df.sort_values(["reposts_visible", "published_at"], ascending=[False, False])
 
 st.subheader("Found posts")
 
-editor_limit_option = st.selectbox(
-    "Rows in editor",
-    ["200", "500", "1000", "All"],
-    index=0,
-)
-
-if editor_limit_option == "All":
+if row_limit == "All":
     limit = len(show_df)
 else:
-    limit = min(len(show_df), int(editor_limit_option))
-
-if editor_limit_option != "All" and len(show_df) > limit:
-    st.info(f"Only the first {limit} rows of the current filter are shown in the editor.")
+    limit = min(len(show_df), int(row_limit))
 
 editor_df = show_df.head(limit).copy()
 disabled_cols = [c for c in editor_df.columns if c != "comments_visible"]
@@ -379,30 +374,19 @@ edited_show_df = st.data_editor(
     disabled=disabled_cols,
     column_config={
         "post_url": st.column_config.LinkColumn("post_url"),
-        "comments_visible": st.column_config.NumberColumn(
-            "comments_visible",
-            min_value=0,
-            step=1,
-            help="You can edit comments manually",
-        ),
-        "erv_percent": st.column_config.NumberColumn(
-            "erv_percent",
-            format="%.2f",
-        ),
+        "comments_visible": st.column_config.NumberColumn("comments_visible", min_value=0, step=1),
+        "erv_percent": st.column_config.NumberColumn("erv_percent", format="%.4f"),
     },
     key="main_editor_table",
 )
 
-c1, c2 = st.columns([1, 5])
-
-with c1:
-    if st.button("Save changes"):
-        try:
-            save_main_editor_changes(edited_show_df)
-            st.success("Comments were saved to data.csv")
-            st.rerun()
-        except Exception as e:
-            st.error("Save error: " + str(e))
+if st.button("Save comments to cloud"):
+    try:
+        upsert_comment_overrides(edited_show_df)
+        st.success("Comments saved to Supabase")
+        st.rerun()
+    except Exception as e:
+        st.error("Save error: " + str(e))
 
 csv_data = show_df.to_csv(index=False).encode("utf-8-sig")
 st.download_button(
