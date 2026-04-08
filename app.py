@@ -1,5 +1,4 @@
-
-from pathlib import Path
+﻿from pathlib import Path
 import re
 import pandas as pd
 import streamlit as st
@@ -39,7 +38,7 @@ def cleanup_text(text: str) -> str:
 
 
 def norm(text: str) -> str:
-    return cleanup_text(text).lower().replace("?", "?")
+    return cleanup_text(text).lower().replace("ё", "е")
 
 
 def generate_term_variants(term: str):
@@ -50,15 +49,13 @@ def generate_term_variants(term: str):
 
 
 def token_pattern(token: str) -> str:
-    token = token.strip().lower().replace("?", "?")
+    token = token.strip().lower().replace("ё", "е")
     if not token:
         return ""
 
-    # short aliases like MOT / ??? -> exact word only
     if len(token) <= 3:
         return rf"(?<![\u0400-\u04FFA-Za-z0-9_]){re.escape(token)}(?![\u0400-\u04FFA-Za-z0-9_])"
 
-    # inflection-tolerant prefix for regular names
     stem_len = max(3, len(token) - 2)
     stem = token[:stem_len]
     return rf"(?<![\u0400-\u04FFA-Za-z0-9_]){re.escape(stem)}[\u0400-\u04FFA-Za-z-]*(?![\u0400-\u04FFA-Za-z0-9_])"
@@ -89,6 +86,19 @@ def build_term_regex(term: str):
 
     return regexes
 
+
+def calc_row_erv(df: pd.DataFrame) -> pd.Series:
+    views = pd.to_numeric(df["views"], errors="coerce").fillna(0)
+    likes = pd.to_numeric(df["likes_visible"], errors="coerce").fillna(0)
+    comments = pd.to_numeric(df["comments_visible"], errors="coerce").fillna(0)
+    reposts = pd.to_numeric(df["reposts_visible"], errors="coerce").fillna(0)
+
+    result = pd.Series(0.0, index=df.index)
+    nonzero = views > 0
+    result.loc[nonzero] = ((likes.loc[nonzero] + comments.loc[nonzero] + reposts.loc[nonzero]) / views.loc[nonzero] * 100).round(2)
+    return result
+
+
 @st.cache_data
 def load_data():
     if not DATA_PATH.exists():
@@ -116,17 +126,17 @@ def load_data():
             df[col] = val
 
     for col in ["views", "likes_visible", "comments_visible", "reposts_visible"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
 
     for col in ["source", "channel_name", "post_id", "post_url", "published_at", "post_text", "raw_html", "processed_comments"]:
         df[col] = df[col].fillna("").astype(str)
+
+    df["post_url"] = df["post_url"].str.strip()
 
     try:
         df["published_at_dt"] = pd.to_datetime(df["published_at"], errors="coerce")
     except Exception:
         df["published_at_dt"] = pd.NaT
-
-    df["post_url"] = df["post_url"].str.strip()
 
     visible_text = df["post_text"].copy()
     empty_mask = visible_text.str.strip().eq("")
@@ -139,6 +149,16 @@ def load_data():
     df["comments_text"] = comments_text
     df["text_preview"] = visible_text.str.slice(0, 300)
 
+    df["searchable_text"] = (
+        df[["visible_text", "comments_text", "post_url"]]
+        .fillna("")
+        .astype(str)
+        .agg(" ".join, axis=1)
+        .map(norm)
+    )
+
+    df["row_erv_percent"] = calc_row_erv(df)
+
     return df
 
 
@@ -148,17 +168,21 @@ def save_main_editor_changes(edited_df: pd.DataFrame):
     if "post_url" not in full_df.columns:
         raise ValueError("No post_url column in data.csv")
 
+    if "comments_visible" not in full_df.columns:
+        full_df["comments_visible"] = 0
+
     full_df["post_url"] = full_df["post_url"].fillna("").astype(str).str.strip()
+    full_df["comments_visible"] = pd.to_numeric(full_df["comments_visible"], errors="coerce").fillna(0).astype(int)
+
     edited_df = edited_df.copy()
     edited_df["post_url"] = edited_df["post_url"].fillna("").astype(str).str.strip()
+    edited_df["comments_visible"] = pd.to_numeric(edited_df["comments_visible"], errors="coerce").fillna(0).astype(int)
 
-    for _, row in edited_df.iterrows():
+    for _, row in edited_df[["post_url", "comments_visible"]].iterrows():
         mask = full_df["post_url"] == row["post_url"]
         if not mask.any():
             continue
-        for col in edited_df.columns:
-            if col in full_df.columns:
-                full_df.loc[mask, col] = row[col]
+        full_df.loc[mask, "comments_visible"] = int(row["comments_visible"])
 
     full_df.to_csv(DATA_PATH, index=False, encoding="utf-8-sig")
     load_data.clear()
@@ -193,6 +217,19 @@ with st.sidebar:
         date_from = None
         date_to = None
 
+    sort_by = st.selectbox(
+        "Sort by",
+        [
+            "Date desc",
+            "Comments desc",
+            "ERV desc",
+            "Views desc",
+            "Likes desc",
+            "Reposts desc",
+        ],
+        index=0,
+    )
+
 aliases = [x.strip() for x in aliases_raw.split(",") if x.strip()]
 search_terms = []
 if artist.strip():
@@ -212,14 +249,11 @@ if date_to is not None and "published_at_dt" in filtered_df.columns:
     filtered_df = filtered_df[filtered_df["published_at_dt"].dt.date <= date_to]
 
 if term_regexes:
-    search_blob = (
-    filtered_df.fillna("").astype(str)
-    .agg(" ".join, axis=1)
-    .map(norm)
-)
-
-    mask = search_blob.apply(lambda x: any(r.search(x) for r in term_regexes))
+    mask = filtered_df["searchable_text"].apply(lambda x: any(r.search(x) for r in term_regexes))
     filtered_df = filtered_df[mask]
+
+filtered_df = filtered_df.copy()
+filtered_df["row_erv_percent"] = calc_row_erv(filtered_df)
 
 posts_total = int(len(filtered_df))
 likes_total = int(filtered_df["likes_visible"].sum())
@@ -251,6 +285,7 @@ show_cols = [
         "likes_visible",
         "comments_visible",
         "reposts_visible",
+        "row_erv_percent",
         "text_preview",
     ]
     if c in filtered_df.columns
@@ -258,11 +293,18 @@ show_cols = [
 
 show_df = filtered_df[show_cols].copy()
 
-if "published_at" in show_df.columns:
-    try:
-        show_df = show_df.sort_values("published_at", ascending=False)
-    except Exception:
-        pass
+if sort_by == "Date desc" and "published_at" in show_df.columns:
+    show_df = show_df.sort_values("published_at", ascending=False)
+elif sort_by == "Comments desc" and "comments_visible" in show_df.columns:
+    show_df = show_df.sort_values(["comments_visible", "published_at"], ascending=[False, False])
+elif sort_by == "ERV desc" and "row_erv_percent" in show_df.columns:
+    show_df = show_df.sort_values(["row_erv_percent", "published_at"], ascending=[False, False])
+elif sort_by == "Views desc" and "views" in show_df.columns:
+    show_df = show_df.sort_values(["views", "published_at"], ascending=[False, False])
+elif sort_by == "Likes desc" and "likes_visible" in show_df.columns:
+    show_df = show_df.sort_values(["likes_visible", "published_at"], ascending=[False, False])
+elif sort_by == "Reposts desc" and "reposts_visible" in show_df.columns:
+    show_df = show_df.sort_values(["reposts_visible", "published_at"], ascending=[False, False])
 
 st.subheader("Found posts")
 
@@ -271,12 +313,27 @@ if len(show_df) > 200:
     st.info("Only the first 200 rows of the current filter are shown in the editor to avoid memory issues.")
 
 editor_df = show_df.head(limit).copy()
+disabled_cols = [c for c in editor_df.columns if c != "comments_visible"]
 
 edited_show_df = st.data_editor(
     editor_df,
     use_container_width=True,
     hide_index=True,
     num_rows="fixed",
+    disabled=disabled_cols,
+    column_config={
+        "post_url": st.column_config.LinkColumn("post_url"),
+        "comments_visible": st.column_config.NumberColumn(
+            "comments_visible",
+            min_value=0,
+            step=1,
+            help="You can edit comments manually",
+        ),
+        "row_erv_percent": st.column_config.NumberColumn(
+            "row_erv_percent",
+            format="%.2f",
+        ),
+    },
     key="main_editor_table",
 )
 
@@ -286,7 +343,7 @@ with c1:
     if st.button("Save changes"):
         try:
             save_main_editor_changes(edited_show_df)
-            st.success("Changes were saved to data.csv")
+            st.success("Comments were saved to data.csv")
             st.rerun()
         except Exception as e:
             st.error("Save error: " + str(e))
