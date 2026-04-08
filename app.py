@@ -78,22 +78,38 @@ def token_pattern(token: str) -> str:
 
 def build_term_regex(term: str):
     regexes = []
+
     for variant in generate_term_variants(term):
         tokens = re.findall(r"[0-9A-Za-z?-??-???]+", variant)
         if not tokens:
             continue
 
-        parts = [token_pattern(t) for t in tokens if token_pattern(t)]
+        parts = []
+        for token in tokens:
+            token = token.strip()
+            if not token:
+                continue
+
+            # ???????? ?????: ?????? ?????? ?????
+            if len(token) <= 3:
+                parts.append(rf"{re.escape(token)}")
+            else:
+                # ??? ??????? ????/??????? ????? ??????????:
+                # ????? -> ?????? / ???????
+                # ???? -> ???? / ????
+                stem_len = max(3, len(token) - 2)
+                stem = token[:stem_len]
+                parts.append(rf"{re.escape(stem)}[A-Za-z?-??-???-]*")
+
         if not parts:
             continue
 
         if len(parts) == 1:
-            pattern = parts[0]
+            regexes.append(re.compile(parts[0], re.IGNORECASE))
         else:
-            # each word in the phrase must be present somewhere in the text
-            pattern = "".join(f"(?=.*{p})" for p in parts) + ".*"
-
-        regexes.append(re.compile(pattern, re.IGNORECASE | re.DOTALL))
+            # ??? ???? ???? "???? ?????" ?????? ????? ?????? ???????????
+            lookahead_pattern = "".join(f"(?=.*{part})" for part in parts) + ".*"
+            regexes.append(re.compile(lookahead_pattern, re.IGNORECASE | re.DOTALL))
 
     return regexes
 
